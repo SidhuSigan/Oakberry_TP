@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Worker } from '../types';
 import { Plus, Edit2, Trash2, Calendar, Phone, Mail, X } from 'lucide-react';
 import { formatPercentage } from '../utils/arbeitspensumUtils';
+import HolidayCalendar from './HolidayCalendar';
 
 interface WorkerManagementProps {
   workers: Worker[];
@@ -18,6 +19,7 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
 }) => {
   const [isAddingWorker, setIsAddingWorker] = useState(false);
   const [editingWorker, setEditingWorker] = useState<Worker | null>(null);
+  const [holidayWorker, setHolidayWorker] = useState<Worker | null>(null);
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
@@ -94,8 +96,13 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
     setFormData({ ...formData, availableDays: newAvailableDays });
   };
 
+  const handleHolidayUpdate = (worker: Worker, holidays: Date[]) => {
+    const updatedWorker = { ...worker, holidays };
+    onUpdateWorker(updatedWorker);
+    setHolidayWorker(null);
+  };
+
   const activeWorkers = workers.filter(w => w.isActive);
-  const inactiveWorkers = workers.filter(w => !w.isActive);
 
   return (
     <div className="p-4 space-y-6">
@@ -155,8 +162,22 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
                       ))}
                     </div>
                   </div>
+                  {worker.holidays.length > 0 && (
+                    <div className="mt-2">
+                      <p className="text-xs text-gray-500">
+                        {worker.holidays.length} holiday{worker.holidays.length !== 1 ? 's' : ''} scheduled
+                      </p>
+                    </div>
+                  )}
                 </div>
                 <div className="flex space-x-2 ml-4">
+                  <button
+                    onClick={() => setHolidayWorker(worker)}
+                    className="p-2 text-purple-600 hover:bg-purple-50 rounded"
+                    title="Manage holidays"
+                  >
+                    <Calendar className="w-4 h-4" />
+                  </button>
                   <button
                     onClick={() => handleEdit(worker)}
                     className="p-2 text-blue-600 hover:bg-blue-50 rounded"
@@ -271,6 +292,14 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
                 </div>
               </div>
 
+              {selectedHolidays.length > 0 && (
+                <div className="p-3 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-gray-600">
+                    {selectedHolidays.length} holiday{selectedHolidays.length !== 1 ? 's' : ''} selected
+                  </p>
+                </div>
+              )}
+
               <div className="flex space-x-3 pt-4">
                 <button
                   type="submit"
@@ -289,6 +318,15 @@ const WorkerManagement: React.FC<WorkerManagementProps> = ({
             </form>
           </div>
         </div>
+      )}
+
+      {/* Holiday Calendar Modal */}
+      {holidayWorker && (
+        <HolidayCalendar
+          worker={holidayWorker}
+          onClose={() => setHolidayWorker(null)}
+          onSave={(holidays) => handleHolidayUpdate(holidayWorker, holidays)}
+        />
       )}
     </div>
   );

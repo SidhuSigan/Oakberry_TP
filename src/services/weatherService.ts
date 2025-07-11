@@ -7,35 +7,49 @@ const ZURICH_COORDS = {
   lon: 8.5417
 };
 
-// You'll need to add your API key here or load it from settings
+// Get API key from environment or localStorage
 const getApiKey = (): string => {
-  // In production, this should come from user settings
-  return import.meta.env.VITE_OPENWEATHER_API_KEY || '';
+  // First check environment variable
+  if (import.meta.env.VITE_OPENWEATHER_API_KEY) {
+    return import.meta.env.VITE_OPENWEATHER_API_KEY;
+  }
+
+  // Then check localStorage settings
+  const settings = localStorage.getItem('oakberry_settings');
+  if (settings) {
+    const parsed = JSON.parse(settings);
+    if (parsed.weatherApiKey) {
+      return parsed.weatherApiKey;
+    }
+  }
+
+  return '';
 };
 
 export async function fetchWeatherData(): Promise<WeatherData[]> {
   try {
-    // Check cache first
-    const cache = loadWeatherCache();
+    // Check cache first (1 hour cache)
+    const cache = loadWeatherCache(3600000); // 1 hour
     if (cache && cache.data) {
       return parseWeatherResponse(cache.data);
     }
 
     const apiKey = getApiKey();
     if (!apiKey) {
-      console.warn('No OpenWeather API key configured');
+      console.warn('No OpenWeather API key configured. Using mock data.');
       return generateMockWeatherData();
     }
 
-    const url = `${OPENWEATHER_API_URL}?lat=${ZURICH_COORDS.lat}&lon=${ZURICH_COORDS.lon}&appid=${apiKey}&units=metric&cnt=56`; // 7 days * 8 (3-hour intervals)
+    const url = `${OPENWEATHER_API_URL}?lat=${ZURICH_COORDS.lat}&lon=${ZURICH_COORDS.lon}&appid=${apiKey}&units=metric&cnt=56`;
 
     const response = await fetch(url);
     if (!response.ok) {
-      throw new Error('Weather API request failed');
+      console.error('Weather API request failed:', response.status);
+      return generateMockWeatherData();
     }
 
     const data = await response.json();
-    saveWeatherCache(data);
+    saveWeatherCache(data, 'zurich');
 
     return parseWeatherResponse(data);
   } catch (error) {
@@ -62,7 +76,7 @@ function parseWeatherResponse(data: any): WeatherData[] {
   // Process each day
   const weatherData: WeatherData[] = [];
 
-  dailyData.forEach((dayItems, dateKey) => {
+  Array.from(dailyData.entries()).forEach(([dateKey, dayItems]) => {
     const date = new Date(dateKey);
 
     // Calculate daily aggregates
@@ -80,9 +94,10 @@ function parseWeatherResponse(data: any): WeatherData[] {
       return total + (item.rain?.['3h'] || 0) + (item.snow?.['3h'] || 0);
     }, 0);
 
-    // Determine if sunny/hot
-    const isSunny = ['clear', 'few clouds'].includes(mainCondition.description.toLowerCase());
-    const isHot = tempMax >= 25; // 25°C threshold for "hot"
+    // Determine if sunny/hot for Zurich standards
+    const isSunny = ['clear', 'few clouds'].includes(mainCondition.description.toLowerCase()) ||
+                    mainCondition.main.toLowerCase() === 'clear';
+    const isHot = tempMax >= 25; // 25°C is considered hot in Zurich
 
     weatherData.push({
       date,
@@ -126,25 +141,38 @@ function generateMockWeatherData(): WeatherData[] {
   const data: WeatherData[] = [];
   const today = new Date();
 
+  // Realistic Zurich weather patterns
+  const weatherPatterns = [
+    { temp: 18, isSunny: true, description: 'Clear sky' },
+    { temp: 20, isSunny: true, description: 'Few clouds' },
+    { temp: 16, isSunny: false, description: 'Partly cloudy' },
+    { temp: 22, isSunny: true, description: 'Clear sky' },
+    { temp: 25, isSunny: true, description: 'Sunny' },
+    { temp: 23, isSunny: true, description: 'Few clouds' },
+    { temp: 19, isSunny: false, description: 'Cloudy' }
+  ];
+
   for (let i = 0; i < 7; i++) {
     const date = new Date(today);
     date.setDate(today.getDate() + i);
 
-    // Generate realistic weather for Zurich
-    const baseTemp = 15 + Math.random() * 10; // 15-25°C
+    const pattern = weatherPatterns[i % weatherPatterns.length];
     const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-    const isSunny = Math.random() > 0.4; // 60% chance of sun
+
+    // Higher chance of good weather on weekends for demo
+    const adjustedPattern = isWeekend && Math.random() > 0.3 ?
+      { ...pattern, temp: pattern.temp + 3, isSunny: true } : pattern;
 
     data.push({
       date,
-      temp: baseTemp,
-      tempMax: baseTemp + 5,
-      tempMin: baseTemp - 5,
-      description: isSunny ? 'Clear sky' : 'Partly cloudy',
-      icon: isSunny ? '01d' : '02d',
-      precipitation: isSunny ? 0 : Math.random() * 5,
-      isSunny,
-      isHot: baseTemp > 22 && isSunny
+      temp: adjustedPattern.temp,
+      tempMax: adjustedPattern.temp + 5,
+      tempMin: adjustedPattern.temp - 5,
+      description: adjustedPattern.description,
+      icon: adjustedPattern.isSunny ? '01d' : '02d',
+      precipitation: adjustedPattern.isSunny ? 0 : Math.random() * 5,
+      isSunny: adjustedPattern.isSunny,
+      isHot: adjustedPattern.temp >= 25
     });
   }
 
@@ -156,7 +184,7 @@ export function getWeatherIcon(iconCode: string): string {
 }
 
 export function getWeatherEmoji(weather: WeatherData): string {
-  if (weather.isSunny && weather.isHot) return '☀️🔥';
+  if (weather.isHot && weather.isSunny) return '☀️🔥';
   if (weather.isSunny) return '☀️';
   if (weather.precipitation > 0) return '🌧️';
   if (weather.description.toLowerCase().includes('cloud')) return '☁️';
@@ -172,12 +200,12 @@ export function getStaffingRecommendation(weather: WeatherData, date: Date): str
   const isWeekend = date.getDay() === 0 || date.getDay() === 6;
 
   if (weather.isHot && isWeekend) {
-    return '🔥 Very busy day expected! Consider 5-6 staff during peak hours.';
+    return '🔥 Very busy day expected! Schedule 5-6 staff during peak hours.';
   } else if (weather.isHot || (weather.isSunny && isWeekend)) {
-    return '☀️ Busy day expected. Consider 4-5 staff during peak hours.';
+    return '☀️ Busy day expected. Schedule 4-5 staff during peak hours.';
   } else if (weather.precipitation > 5) {
-    return '🌧️ Slower day expected due to rain. Normal staffing should be fine.';
+    return '🌧️ Slower day expected. Normal staffing (3-4) should be fine.';
   }
 
-  return 'Normal staffing levels recommended.';
+  return 'Normal staffing levels recommended (3-4 during peak).';
 }

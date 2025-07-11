@@ -74,7 +74,7 @@ export function loadSchedules(): Schedule[] {
 
 // Settings Storage
 export interface AppSettings {
-  apiKey?: string;
+  weatherApiKey?: string;
   defaultView: 'dashboard' | 'schedule';
   notifications: boolean;
   theme: 'light' | 'dark' | 'auto';
