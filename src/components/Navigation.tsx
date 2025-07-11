@@ -1,13 +1,15 @@
 import React from 'react';
 import { Home, Users, Calendar, Plus } from 'lucide-react';
 
+type ViewType = 'dashboard' | 'workers' | 'generate' | 'edit';
+
 interface NavigationProps {
-  currentView: string;
-  onNavigate: (view: string) => void;
+  currentView: ViewType;
+  onNavigate: (view: ViewType) => void;
 }
 
 const Navigation: React.FC<NavigationProps> = ({ currentView, onNavigate }) => {
-  const navItems = [
+  const navItems: Array<{ id: ViewType; label: string; icon: typeof Home }> = [
     { id: 'dashboard', label: 'Home', icon: Home },
     { id: 'workers', label: 'Workers', icon: Users },
     { id: 'generate', label: 'Generate', icon: Plus },

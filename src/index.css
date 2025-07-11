@@ -1,6 +1,4 @@
-@import "tailwindcss/base";
-@import "tailwindcss/components";
-@import "tailwindcss/utilities";
+@import "tailwindcss";
 
 /* Custom global styles */
 :root {
@@ -64,4 +62,17 @@ html {
 .spinner {
   @apply inline-block w-8 h-8 border-4 border-gray-200 rounded-full animate-spin;
   border-top-color: #3b82f6;
+}
+
+/* Custom component classes */
+.btn-primary {
+  @apply bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors;
+}
+
+.card {
+  @apply bg-white rounded-lg shadow-sm border border-gray-200 p-4;
+}
+
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
 }
