@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import { Calendar, Users, Settings, Home } from 'lucide-react';
 import WorkerManagement from './components/WorkerManagement';
+import ScheduleGeneration from './components/ScheduleGeneration';
 
 type Page = 'home' | 'workers' | 'schedules' | 'settings';
 
@@ -15,22 +16,7 @@ function App() {
       case 'workers':
         return <WorkerManagement />;
       case 'schedules':
-        return (
-          <div className="container py-8">
-            <div className="max-w-4xl mx-auto text-center">
-              <Calendar className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">Schedule Generation</h2>
-              <p className="text-gray-600 mb-8">
-                This feature will be available in Step 3: Schedule Generation Engine
-              </p>
-              <div className="card bg-yellow-50 border-yellow-200">
-                <p className="text-yellow-800">
-                  ⏳ Coming soon - automated weekly schedule generation with manual override capabilities
-                </p>
-              </div>
-            </div>
-          </div>
-        );
+        return <ScheduleGeneration />;
       case 'settings':
         return (
           <div className="container py-8">
@@ -126,8 +112,7 @@ function App() {
                       System Status: Ready
                     </h4>
                     <p className="text-sm text-primary-700">
-                      Data models and worker management are now available!
-                      Try adding your first team member.
+                      Schedule generation is now available! Try creating your first weekly schedule.
                     </p>
                   </div>
                 </div>
@@ -156,12 +141,12 @@ function App() {
                     </div>
                   </div>
                   <div className="flex items-center space-x-3">
-                    <div className="w-6 h-6 bg-gray-300 rounded-full flex items-center justify-center">
-                      <span className="text-gray-600 text-xs">3</span>
+                    <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
+                      <span className="text-white text-xs">✓</span>
                     </div>
                     <div>
-                      <span className="font-medium text-gray-700">Step 3: Schedule Generation Engine</span>
-                      <p className="text-sm text-gray-600">⏳ Next - Automatic weekly schedule creation</p>
+                      <span className="font-medium text-green-700">Step 3: Schedule Generation Engine</span>
+                      <p className="text-sm text-gray-600">✅ Complete - Automatic weekly schedule creation with smart assignment</p>
                     </div>
                   </div>
                   <div className="flex items-center space-x-3">
@@ -170,7 +155,7 @@ function App() {
                     </div>
                     <div>
                       <span className="font-medium text-gray-700">Step 4: Schedule Editing & Management</span>
-                      <p className="text-sm text-gray-600">⏳ Upcoming - Drag-and-drop editing interface</p>
+                      <p className="text-sm text-gray-600">⏳ Next - Drag-and-drop editing interface</p>
                     </div>
                   </div>
                   <div className="flex items-center space-x-3">
