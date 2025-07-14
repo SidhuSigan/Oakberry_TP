@@ -1,20 +1,18 @@
-// Updated ScheduleGeneration component with improved display
-// This shows how to integrate the new consolidated view
+// src/components/ScheduleGeneration.tsx - Updated with Editor Integration
 
 import React, { useState, useEffect } from 'react';
 import {
   Calendar,
-  Users,
-  Clock,
+//   Users,
+//   Clock,
   AlertTriangle,
   CheckCircle,
   RefreshCw,
-  Eye,
   Download,
-  Settings,
   ChevronRight,
   ToggleLeft,
-  ToggleRight
+  ToggleRight,
+  Edit3
 } from 'lucide-react';
 
 import { scheduleService } from '../services/scheduleService';
@@ -23,147 +21,97 @@ import ImprovedScheduleDisplay from './ImprovedScheduleDisplay';
 import type { Schedule, Worker } from '../types';
 
 interface ScheduleGenerationProps {
-  // Could accept props for pre-selected week, etc.
+  onScheduleGenerated?: (schedule: Schedule) => void;
 }
 
-const ScheduleGeneration: React.FC<ScheduleGenerationProps> = () => {
-  const [selectedWeek, setSelectedWeek] = useState<string>('');
-  const [currentSchedule, setCurrentSchedule] = useState<Schedule | null>(null);
+const ScheduleGeneration: React.FC<ScheduleGenerationProps> = ({ onScheduleGenerated }) => {
+  const [selectedWeek, setSelectedWeek] = useState('');
   const [workers, setWorkers] = useState<Worker[]>([]);
+  const [currentSchedule, setCurrentSchedule] = useState<Schedule | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [generationIssues, setGenerationIssues] = useState<string[]>([]);
-  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false);
-  const [useImprovedDisplay, setUseImprovedDisplay] = useState(true); // NEW: Toggle between views
+  const [useImprovedDisplay, setUseImprovedDisplay] = useState(true);
 
-  // Load workers and set default week
+  // Load workers and set default week on component mount
   useEffect(() => {
     const allWorkers = workerService.getAllWorkers();
     setWorkers(allWorkers);
 
-    // Set default to next Monday
+    // Set default week to next Monday
     const today = new Date();
     const nextMonday = new Date(today);
-    const daysUntilMonday = (8 - today.getDay()) % 7 || 7;
+    const daysUntilMonday = (7 - today.getDay() + 1) % 7 || 7;
     nextMonday.setDate(today.getDate() + daysUntilMonday);
     setSelectedWeek(nextMonday.toISOString().split('T')[0]);
+
+    // Load existing schedule if available
+    const existingSchedule = scheduleService.getScheduleForWeek(nextMonday.toISOString().split('T')[0]);
+    if (existingSchedule) {
+      setCurrentSchedule(existingSchedule);
+    }
   }, []);
 
-  // Check for existing schedule when week changes
-  useEffect(() => {
-    if (selectedWeek) {
-      const existingSchedule = scheduleService.getScheduleForWeek(selectedWeek);
-      setCurrentSchedule(existingSchedule);
-
-      // Check if generation is possible
-      const canGenerate = scheduleService.canGenerateSchedule(selectedWeek);
-      setGenerationIssues(canGenerate.issues);
-    }
-  }, [selectedWeek]);
+  const activeWorkers = workers.filter(w => w.isActive);
 
   const handleGenerateSchedule = async () => {
-    if (!selectedWeek) return;
+    if (!selectedWeek || activeWorkers.length === 0) return;
 
     setIsGenerating(true);
     try {
-      // Check if we can generate
-      const canGenerate = scheduleService.canGenerateSchedule(selectedWeek);
-      if (!canGenerate.canGenerate) {
-        alert('Cannot generate schedule:\n' + canGenerate.issues.join('\n'));
-        return;
-      }
+      // Generate the schedule using your existing service
+      const newSchedule = scheduleService.generateSchedule({ weekStartDate: selectedWeek });  // activeWorkers
 
-      // Generate the schedule
-      const newSchedule = scheduleService.generateSchedule({
-        weekStartDate: selectedWeek,
-        prioritizeWorkBalance: true
-      });
+      // Save the schedule
+      scheduleService.saveSchedule(newSchedule);
+      setCurrentSchedule(newSchedule);
 
-      // Save it
-      const saved = scheduleService.saveSchedule(newSchedule);
-      if (saved) {
-        setCurrentSchedule(newSchedule);
-      } else {
-        alert('Failed to save schedule');
+      // Notify parent component (App.tsx) that schedule was generated
+      if (onScheduleGenerated) {
+        onScheduleGenerated(newSchedule);
       }
     } catch (error) {
       console.error('Error generating schedule:', error);
-      alert('Error generating schedule');
+      // You could add toast notification here
     } finally {
       setIsGenerating(false);
     }
   };
 
   const handleOverwriteSchedule = async () => {
-    if (!currentSchedule) return;
+    if (!selectedWeek || activeWorkers.length === 0) return;
 
-    const confirmed = window.confirm(
-      'This will overwrite the existing schedule. All manual changes will be lost. Continue?'
+    const confirmOverwrite = window.confirm(
+      'This will replace the existing schedule. Are you sure you want to continue?'
     );
 
-    if (confirmed) {
-      // Delete existing and generate new
-      scheduleService.deleteSchedule(currentSchedule.id);
-      setCurrentSchedule(null);
-      await handleGenerateSchedule();
+    if (!confirmOverwrite) return;
+
+    await handleGenerateSchedule();
+  };
+
+  const handleScheduleUpdate = (updatedSchedule: Schedule) => {
+    setCurrentSchedule(updatedSchedule);
+    if (onScheduleGenerated) {
+      onScheduleGenerated(updatedSchedule);
     }
   };
 
-  const handleEditShift = (workerId: string, date: string) => {
-    // TODO: Implement in Step 4
-    console.log('Edit shift for worker:', workerId, 'on date:', date);
-    alert('Shift editing will be available in Step 4: Schedule Editing & Management');
-  };
-
-  const handleAssignShift = (shiftId: string) => {
-    // TODO: Implement in Step 4
-    console.log('Assign shift:', shiftId);
-    alert('Shift assignment will be available in Step 4: Schedule Editing & Management');
-  };
-
-  const formatWeekRange = (weekStart: string): string => {
-    const start = new Date(weekStart);
-    const end = new Date(start);
-    end.setDate(start.getDate() + 6);
-
-    return `${start.toLocaleDateString()} - ${end.toLocaleDateString()}`;
-  };
-
-//   const getWorkerStats = () => {
-//     if (!currentSchedule) return null;
-//     return scheduleService.calculateWeeklyHours(currentSchedule);
-//   };
-
-//   const getScheduleStats = () => {
-//     if (!currentSchedule) return null;
-//     return scheduleService.getScheduleStats(currentSchedule);
-//   };
-
-  const activeWorkers = workers.filter(w => w.isActive);
-
   return (
     <div className="container py-8">
-      <div className="max-w-7xl mx-auto">
+      <div className="max-w-6xl mx-auto space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Schedule Generation</h1>
-            <p className="text-gray-600">Create automated weekly schedules with smart worker assignment</p>
-          </div>
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
-              className="flex items-center space-x-2 px-3 py-2 text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-            >
-              <Settings className="w-4 h-4" />
-              <span>Options</span>
-            </button>
-          </div>
+        <div className="text-center">
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Schedule Generation</h2>
+          <p className="text-gray-600">
+            Generate optimized weekly schedules for your team
+          </p>
         </div>
 
-        {/* Week Selection */}
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Select Week</h3>
-          <div className="flex items-center space-x-4">
+        {/* Generation Form */}
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Generate New Schedule</h3>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            {/* Week Selection */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Week Starting (Monday)
@@ -172,70 +120,47 @@ const ScheduleGeneration: React.FC<ScheduleGenerationProps> = () => {
                 type="date"
                 value={selectedWeek}
                 onChange={(e) => setSelectedWeek(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
               />
             </div>
-            {selectedWeek && (
-              <div className="flex-1">
-                <p className="text-sm text-gray-600">Week Range:</p>
-                <p className="font-medium text-gray-900">{formatWeekRange(selectedWeek)}</p>
-              </div>
-            )}
-          </div>
-        </div>
 
-        {/* Pre-generation Checks */}
-        {selectedWeek && (
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Generation Status</h3>
-
-            <div className="grid md:grid-cols-3 gap-4 mb-4">
-              <div className="flex items-center space-x-3">
-                <Users className="w-8 h-8 text-blue-600" />
-                <div>
-                  <p className="text-sm text-gray-600">Active Workers</p>
-                  <p className="text-xl font-bold text-gray-900">{activeWorkers.length}</p>
+            {/* Worker Summary */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Available Workers
+              </label>
+              <div className="bg-gray-50 rounded-md p-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-600">Active Workers:</span>
+                  <span className="font-medium text-gray-900">{activeWorkers.length}</span>
                 </div>
-              </div>
-              <div className="flex items-center space-x-3">
-                <Calendar className="w-8 h-8 text-green-600" />
-                <div>
-                  <p className="text-sm text-gray-600">Status</p>
-                  <p className={`text-sm font-medium ${generationIssues.length === 0 ? 'text-green-600' : 'text-yellow-600'}`}>
-                    {generationIssues.length === 0 ? 'Ready to Generate' : 'Ready with Warnings'}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center space-x-3">
-                <Clock className="w-8 h-8 text-gray-600" />
-                <div>
-                  <p className="text-sm text-gray-600">Existing Schedule</p>
-                  <p className="text-sm font-medium text-gray-900">
-                    {currentSchedule ? 'Yes (will overwrite)' : 'None'}
-                  </p>
+                <div className="flex items-center justify-between text-sm mt-1">
+                  <span className="text-gray-600">Total Capacity:</span>
+                  <span className="font-medium text-gray-900">
+                    {activeWorkers.reduce((sum, w) => sum + w.workPercentage, 0)}%
+                  </span>
                 </div>
               </div>
             </div>
+          </div>
 
-            {/* Issues/Warnings */}
-            {generationIssues.length > 0 && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4 mb-4">
-                <div className="flex items-start space-x-3">
-                  <AlertTriangle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <h4 className="font-medium text-yellow-800">Generation Warnings</h4>
-                    <ul className="mt-2 text-sm text-yellow-700 space-y-1">
-                      {generationIssues.map((issue, index) => (
-                        <li key={index}>• {issue}</li>
-                      ))}
-                    </ul>
-                  </div>
+          {/* Generation Controls */}
+          <div className="mt-6 flex items-center justify-between">
+            <div className="text-sm text-gray-600">
+              {activeWorkers.length === 0 ? (
+                <div className="flex items-center text-red-600">
+                  <AlertTriangle className="w-4 h-4 mr-1" />
+                  No active workers available
                 </div>
-              </div>
-            )}
+              ) : (
+                <div className="flex items-center text-green-600">
+                  <CheckCircle className="w-4 h-4 mr-1" />
+                  Ready to generate schedule
+                </div>
+              )}
+            </div>
 
-            {/* Generation Button */}
-            <div className="flex justify-center">
+            <div className="flex items-center space-x-3">
               {currentSchedule ? (
                 <button
                   onClick={handleOverwriteSchedule}
@@ -259,16 +184,26 @@ const ScheduleGeneration: React.FC<ScheduleGenerationProps> = () => {
               )}
             </div>
           </div>
-        )}
+        </div>
 
-        {/* Display Toggle and Generated Schedule */}
+        {/* Generated Schedule Display */}
         {currentSchedule && (
           <>
-            {/* Display Mode Toggle */}
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">
+            {/* Schedule Actions */}
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-gray-900">Schedule Display</h3>
+                <h3 className="text-lg font-semibold text-gray-900">Generated Schedule</h3>
                 <div className="flex items-center space-x-3">
+                  {/* Edit Button */}
+                  <button
+                    onClick={() => onScheduleGenerated && onScheduleGenerated(currentSchedule)}
+                    className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                    <span>Edit Schedule</span>
+                  </button>
+
+                  {/* Display Toggle */}
                   <button
                     onClick={() => setUseImprovedDisplay(!useImprovedDisplay)}
                     className="flex items-center space-x-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
@@ -276,6 +211,7 @@ const ScheduleGeneration: React.FC<ScheduleGenerationProps> = () => {
                     {useImprovedDisplay ? <ToggleRight className="w-4 h-4 text-blue-600" /> : <ToggleLeft className="w-4 h-4" />}
                     <span>{useImprovedDisplay ? 'Worker-Centric View' : 'Traditional View'}</span>
                   </button>
+
                   <button className="flex items-center space-x-2 px-3 py-1.5 text-sm text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors">
                     <Download className="w-4 h-4" />
                     <span>Export PDF</span>
@@ -285,22 +221,39 @@ const ScheduleGeneration: React.FC<ScheduleGenerationProps> = () => {
 
               {/* Feature Comparison */}
               <div className="mt-4 grid md:grid-cols-2 gap-4 text-sm">
-                <div className={`p-3 rounded-md ${useImprovedDisplay ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}`}>
-                  <h4 className="font-medium mb-2">👥 Worker-Centric View {useImprovedDisplay && '(Active)'}</h4>
+                <div className={`p-3 rounded-md ${useImprovedDisplay ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 border border-gray-200'}`}>
+                  <h4 className="font-medium text-gray-900 mb-2">Worker-Centric View</h4>
                   <ul className="space-y-1 text-gray-600">
-                    <li>• Shows continuous work blocks per worker</li>
-                    <li>• Easier to understand daily workload</li>
-                    <li>• Better for drag-and-drop editing</li>
-                    <li>• Consolidates overlapping shifts</li>
+                    <li className="flex items-center space-x-2">
+                      <ChevronRight className="w-3 h-3" />
+                      <span><strong>Continuous work blocks</strong> instead of fragmented shifts</span>
+                    </li>
+                    <li className="flex items-center space-x-2">
+                      <ChevronRight className="w-3 h-3" />
+                      <span><strong>Clear daily hours</strong> for each worker</span>
+                    </li>
+                    <li className="flex items-center space-x-2">
+                      <ChevronRight className="w-3 h-3" />
+                      <span><strong>Better preparation</strong> for drag-and-drop editing</span>
+                    </li>
                   </ul>
                 </div>
-                <div className={`p-3 rounded-md ${!useImprovedDisplay ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50'}`}>
-                  <h4 className="font-medium mb-2">⏰ Traditional View {!useImprovedDisplay && '(Active)'}</h4>
+
+                <div className={`p-3 rounded-md ${!useImprovedDisplay ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 border border-gray-200'}`}>
+                  <h4 className="font-medium text-gray-900 mb-2">Traditional View</h4>
                   <ul className="space-y-1 text-gray-600">
-                    <li>• Shows individual shift periods</li>
-                    <li>• Detailed coverage breakdown</li>
-                    <li>• Good for understanding peak times</li>
-                    <li>• Technical/administrative view</li>
+                    <li className="flex items-center space-x-2">
+                      <ChevronRight className="w-3 h-3" />
+                      <span><strong>Individual shifts</strong> shown separately</span>
+                    </li>
+                    <li className="flex items-center space-x-2">
+                      <ChevronRight className="w-3 h-3" />
+                      <span><strong>Detailed shift types</strong> (opening, closing)</span>
+                    </li>
+                    <li className="flex items-center space-x-2">
+                      <ChevronRight className="w-3 h-3" />
+                      <span><strong>Technical view</strong> for debugging</span>
+                    </li>
                   </ul>
                 </div>
               </div>
@@ -311,74 +264,42 @@ const ScheduleGeneration: React.FC<ScheduleGenerationProps> = () => {
               <ImprovedScheduleDisplay
                 schedule={currentSchedule}
                 workers={workers}
-                onEditShift={handleEditShift}
-                onAssignShift={handleAssignShift}
+                onScheduleUpdate={handleScheduleUpdate}
               />
             ) : (
-              // Keep the original display as fallback
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                 <h3 className="text-lg font-semibold text-gray-900 mb-4">Traditional Schedule View</h3>
-                <p className="text-gray-600 mb-4">
-                  This is the original technical view showing individual shift periods.
-                  Toggle to "Worker-Centric View" above for the improved display.
-                </p>
-                {/* Original schedule display code would go here */}
-                <div className="text-center py-8 text-gray-500">
-                  <Eye className="w-8 h-8 mx-auto mb-2 text-gray-300" />
-                  <p>Original schedule display preserved for comparison</p>
-                </div>
-              </div>
-            )}
-
-            {/* Next Steps */}
-            <div className="mt-8 bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <div className="flex items-start space-x-3">
-                <CheckCircle className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
-                <div>
-                  <h4 className="font-medium text-blue-900">Schedule Generated Successfully!</h4>
-                  <div className="mt-2 text-sm text-blue-800">
-                    <p className="mb-2">The improved display now shows:</p>
-                    <ul className="space-y-1">
-                      <li className="flex items-center space-x-2">
-                        <ChevronRight className="w-3 h-3" />
-                        <span><strong>Continuous work blocks</strong> instead of fragmented shifts</span>
-                      </li>
-                      <li className="flex items-center space-x-2">
-                        <ChevronRight className="w-3 h-3" />
-                        <span><strong>Clear daily hours</strong> for each worker</span>
-                      </li>
-                      <li className="flex items-center space-x-2">
-                        <ChevronRight className="w-3 h-3" />
-                        <span><strong>Better preparation</strong> for drag-and-drop editing in Step 4</span>
-                      </li>
-                    </ul>
+                <div className="grid grid-cols-7 gap-4">
+                  {/* Traditional grid view would go here */}
+                  <div className="col-span-7 text-center text-gray-500 py-8">
+                    Traditional view implementation coming soon...
                   </div>
                 </div>
               </div>
-            </div>
+            )}
           </>
         )}
 
         {/* Help Section */}
-        <div className="bg-gray-50 rounded-lg p-6 mt-8">
-          <h3 className="font-medium text-gray-900 mb-3">Schedule Display Improvements</h3>
+        <div className="bg-gray-50 rounded-lg p-6">
+          <h3 className="font-medium text-gray-900 mb-3">Next Steps</h3>
           <div className="grid md:grid-cols-2 gap-6 text-sm text-gray-600">
             <div>
-              <h4 className="font-medium text-gray-900 mb-2">Problem Solved</h4>
+              <h4 className="font-medium text-gray-900 mb-2">What You Can Do Now</h4>
               <ul className="space-y-1">
-                <li>• Workers no longer appear in multiple overlapping shifts</li>
-                <li>• Clear understanding of daily workload per worker</li>
-                <li>• Better foundation for Step 4 drag-and-drop editing</li>
-                <li>• More intuitive for non-technical users</li>
+                <li>• Generate schedules for any week</li>
+                <li>• View worker-centric consolidated display</li>
+                <li>• See Arbeitspensum status for each worker</li>
+                <li>• Switch to Schedule Editor for manual adjustments</li>
               </ul>
             </div>
             <div>
-              <h4 className="font-medium text-gray-900 mb-2">Coming in Step 4</h4>
+              <h4 className="font-medium text-gray-900 mb-2">Coming in Phase 4 Editor</h4>
               <ul className="space-y-1">
-                <li>• Drag workers between days</li>
-                <li>• Adjust start/end times with handles</li>
-                <li>• Visual timeline view</li>
+                <li>• Click-to-assign workers to shifts</li>
+                <li>• Drag-and-drop shifts between days</li>
                 <li>• Real-time conflict detection</li>
+                <li>• Undo/redo functionality</li>
               </ul>
             </div>
           </div>
@@ -389,3 +310,9 @@ const ScheduleGeneration: React.FC<ScheduleGenerationProps> = () => {
 };
 
 export default ScheduleGeneration;
+
+export interface ImprovedScheduleDisplayProps {
+  schedule: Schedule;
+  workers: Worker[];
+  onScheduleUpdate: (updatedSchedule: Schedule) => void;
+}

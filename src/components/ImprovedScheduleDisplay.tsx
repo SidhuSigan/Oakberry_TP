@@ -10,6 +10,7 @@ import { scheduleDisplayService, type ConsolidatedWorkerShift } from '../service
 interface ImprovedScheduleDisplayProps {
   schedule: Schedule;
   workers: Worker[];
+  onScheduleUpdate: (updatedSchedule: Schedule) => void;
   onEditShift?: (workerId: string, date: string) => void;
   onAssignShift?: (shiftId: string) => void;
 }
