@@ -1,21 +1,21 @@
 // src/components/ScheduleEditor.tsx
-// Phase 4: Schedule Editing & Management - Connected to real data
+// Phase 4: User-Friendly Schedule Editor - Redesigned for store managers
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
-  Calendar,
   Clock,
   User,
+  Users,
   Edit3,
-  Move,
   RotateCcw,
   AlertTriangle,
-  CheckCircle,
   XCircle,
-//   Save,
   Download,
   Undo,
-  Users
+  UserPlus,
+  UserMinus,
+  Coffee,
+  Moon
 } from 'lucide-react';
 
 // Import your existing services and types
@@ -26,15 +26,37 @@ import type { Schedule, Worker, Shift, DayOfWeek } from '../types';
 interface ScheduleEditorProps {
   schedule: Schedule;
   onScheduleUpdate: (updatedSchedule: Schedule) => void;
+  onBack?: () => void;
 }
 
-const ScheduleEditor: React.FC<ScheduleEditorProps> = ({ schedule, onScheduleUpdate }) => {
+// Interface for consolidated worker shift per day
+interface ConsolidatedWorkerShift {
+  workerId: string;
+  workerName: string;
+  date: string;
+  shifts: Shift[];
+  totalHours: number;
+  hasOpening: boolean;
+  hasClosing: boolean;
+  timeRange: string;
+}
+
+// Interface for daily staffing summary
+interface DailyStaffingSummary {
+  date: string;
+  totalWorkers: number;
+  totalHours: number;
+  hasOpening: boolean;
+  hasClosing: boolean;
+  shifts: ConsolidatedWorkerShift[];
+  unassignedShifts: Shift[];
+}
+
+const ScheduleEditor: React.FC<ScheduleEditorProps> = ({ schedule, onScheduleUpdate, onBack }) => {
   const [workers, setWorkers] = useState<Worker[]>([]);
-  const [editMode, setEditMode] = useState<'click' | 'drag'>('click');
-  const [draggedShift, setDraggedShift] = useState<(Shift & { originalDate: string }) | null>(null);
-  const [dropZones, setDropZones] = useState<string[]>([]);
   const [undoStack, setUndoStack] = useState<Schedule[]>([]);
   const [redoStack, setRedoStack] = useState<Schedule[]>([]);
+  const [showAddWorkerModal, setShowAddWorkerModal] = useState<{date: string} | null>(null);
 
   // Load workers on component mount
   useEffect(() => {
@@ -42,83 +64,62 @@ const ScheduleEditor: React.FC<ScheduleEditorProps> = ({ schedule, onScheduleUpd
     setWorkers(allWorkers.filter(w => w.isActive));
   }, []);
 
-  // Group shifts by date for display
-  const groupShiftsByDate = () => {
-    const grouped: Record<string, Shift[]> = {};
+  // Calculate consolidated daily staffing
+  const calculateDailyStaffing = (): DailyStaffingSummary[] => {
+    const dates = [...new Set(schedule.shifts.map(s => s.date))].sort();
+    
+    return dates.map(date => {
+      const dayShifts = schedule.shifts.filter(s => s.date === date);
+      const assignedShifts = dayShifts.filter(s => s.workerId);
+      const unassignedShifts = dayShifts.filter(s => !s.workerId);
+      
+      // Group shifts by worker
+      const workerShifts: Record<string, Shift[]> = {};
+      assignedShifts.forEach(shift => {
+        if (!workerShifts[shift.workerId!]) {
+          workerShifts[shift.workerId!] = [];
+        }
+        workerShifts[shift.workerId!].push(shift);
+      });
 
-    schedule.shifts.forEach(shift => {
-      if (!grouped[shift.date]) {
-        grouped[shift.date] = [];
-      }
-      grouped[shift.date].push(shift);
-    });
+      // Create consolidated worker shifts
+      const consolidatedShifts: ConsolidatedWorkerShift[] = Object.entries(workerShifts).map(([workerId, shifts]) => {
+        const worker = workers.find(w => w.id === workerId);
+        const totalHours = shifts.reduce((sum, shift) => {
+          const start = new Date(`2000-01-01 ${shift.startTime}`);
+          const end = new Date(`2000-01-01 ${shift.endTime}`);
+          return sum + (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+        }, 0);
 
-    return grouped;
-  };
+        const hasOpening = shifts.some(s => s.type === 'opening');
+        const hasClosing = shifts.some(s => s.type === 'closing');
 
-  // Calculate work hours for each worker this week
-  const calculateWorkerHours = () => {
-    const workerHours: Record<string, { scheduled: number; target: number; percentage: number }> = {};
+        // Calculate time range
+        const times = shifts.map(s => ({ start: s.startTime, end: s.endTime }));
+        times.sort((a, b) => a.start.localeCompare(b.start));
+        const timeRange = `${times[0].start} - ${times[times.length - 1].end}`;
 
-    workers.forEach(worker => {
-      workerHours[worker.id] = {
-        scheduled: 0,
-        target: (worker.workPercentage * 40) / 100, // Assuming 40 hours = 100%
-        percentage: worker.workPercentage
+        return {
+          workerId,
+          workerName: worker?.name || 'Unknown',
+          date,
+          shifts,
+          totalHours: Math.round(totalHours * 10) / 10,
+          hasOpening,
+          hasClosing,
+          timeRange
+        };
+      });
+
+      return {
+        date,
+        totalWorkers: consolidatedShifts.length,
+        totalHours: Math.round(consolidatedShifts.reduce((sum, ws) => sum + ws.totalHours, 0) * 10) / 10,
+        hasOpening: consolidatedShifts.some(ws => ws.hasOpening),
+        hasClosing: consolidatedShifts.some(ws => ws.hasClosing),
+        shifts: consolidatedShifts,
+        unassignedShifts
       };
-    });
-
-    schedule.shifts.forEach(shift => {
-      if (shift.workerId && workerHours[shift.workerId]) {
-        const hours = calculateShiftHours(shift.startTime, shift.endTime);
-        workerHours[shift.workerId].scheduled += hours;
-      }
-    });
-
-    return workerHours;
-  };
-
-  const calculateShiftHours = (startTime: string, endTime: string): number => {
-    const start = new Date(`2000-01-01 ${startTime}`);
-    const end = new Date(`2000-01-01 ${endTime}`);
-    return Math.round(((end.getTime() - start.getTime()) / (1000 * 60 * 60)) * 10) / 10;
-  };
-
-  // Check if worker is available for a specific date
-  const isWorkerAvailable = (workerId: string, date: string): boolean => {
-    const worker = workers.find(w => w.id === workerId);
-    if (!worker) return false;
-
-    // Check if it's a holiday for this worker
-    const isHoliday = worker.holidayDates.includes(date);
-    if (isHoliday) return false;
-
-    // Check if worker is available on this day of week
-    const dayOfWeek = new Date(date).toLocaleDateString('en', { weekday: 'long' }).toLowerCase();
-
-    // Convert date to day of week (this is a simplified approach)
-    const dayNames: DayOfWeek[] = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-    const dayIndex = new Date(date).getDay();
-    const dayOfWeekKey = dayNames[dayIndex];
-
-    return worker.availableDays.includes(dayOfWeekKey);
-  };
-
-  // Get available workers for a shift (excluding conflicts)
-  const getAvailableWorkers = (date: string, excludeShiftId?: string): Worker[] => {
-    return workers.filter(worker => {
-      if (!isWorkerAvailable(worker.id, date)) return false;
-
-      // Check for time conflicts with other shifts on the same day
-      const dayShifts = schedule.shifts.filter(s =>
-        s.date === date &&
-        s.id !== excludeShiftId &&
-        s.workerId === worker.id
-      );
-
-      // For now, we'll allow multiple shifts per day per worker
-      // In a more sophisticated version, we'd check for time overlaps
-      return true;
     });
   };
 
@@ -128,33 +129,12 @@ const ScheduleEditor: React.FC<ScheduleEditorProps> = ({ schedule, onScheduleUpd
     setRedoStack([]);
   };
 
-  // Handle worker assignment via dropdown
-  const handleWorkerAssignment = (shiftId: string, workerId: string | null) => {
-    saveState();
-
-    const updatedSchedule = {
-      ...schedule,
-      shifts: schedule.shifts.map(shift =>
-        shift.id === shiftId
-          ? { ...shift, workerId: workerId === null ? undefined : workerId }
-          : shift
-      ),
-      updatedAt: new Date().toISOString()
-    };
-
-    // Save to localStorage and notify parent
-    scheduleService.saveSchedule(updatedSchedule);
-    onScheduleUpdate(updatedSchedule);
-  };
-
   // Handle undo
   const handleUndo = () => {
     if (undoStack.length === 0) return;
-
     const previousState = undoStack[undoStack.length - 1];
     setRedoStack(prev => [schedule, ...prev.slice(0, 9)]);
     setUndoStack(prev => prev.slice(0, -1));
-
     scheduleService.saveSchedule(previousState);
     onScheduleUpdate(previousState);
   };
@@ -162,80 +142,97 @@ const ScheduleEditor: React.FC<ScheduleEditorProps> = ({ schedule, onScheduleUpd
   // Handle redo
   const handleRedo = () => {
     if (redoStack.length === 0) return;
-
     const nextState = redoStack[0];
     setUndoStack(prev => [...prev.slice(-9), schedule]);
     setRedoStack(prev => prev.slice(1));
-
     scheduleService.saveSchedule(nextState);
     onScheduleUpdate(nextState);
   };
 
-  // Drag and drop handlers
-  const handleDragStart = (e: React.DragEvent, shift: Shift) => {
-    setDraggedShift({ ...shift, originalDate: shift.date });
-
-    // Calculate valid drop zones (dates where worker is available)
-    const validDates = getUniqueDates().filter(date => {
-      if (shift.workerId && !isWorkerAvailable(shift.workerId, date)) return false;
-      return date !== shift.date; // Can't drop on same date
-    });
-
-    setDropZones(validDates);
-    e.dataTransfer.effectAllowed = 'move';
-  };
-
-  const handleDragOver = (e: React.DragEvent, date: string) => {
-    if (dropZones.includes(date)) {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-    }
-  };
-
-  const handleDrop = (e: React.DragEvent, newDate: string) => {
-    e.preventDefault();
-
-    if (!draggedShift || !dropZones.includes(newDate)) return;
+  // Remove worker from a day
+  const handleRemoveWorker = (workerId: string, date: string) => {
+    const workerName = workers.find(w => w.id === workerId)?.name || 'Worker';
+    const confirmRemove = window.confirm(`Remove ${workerName} from ${new Date(date).toLocaleDateString()}?`);
+    
+    if (!confirmRemove) return;
 
     saveState();
-
     const updatedSchedule = {
       ...schedule,
-      shifts: schedule.shifts.map(shift =>
-        shift.id === draggedShift.id
-          ? { ...shift, date: newDate }
-          : shift
+      shifts: schedule.shifts.filter(shift => 
+        !(shift.workerId === workerId && shift.date === date)
       ),
       updatedAt: new Date().toISOString()
     };
 
     scheduleService.saveSchedule(updatedSchedule);
     onScheduleUpdate(updatedSchedule);
-
-    setDraggedShift(null);
-    setDropZones([]);
   };
 
-  const handleDragEnd = () => {
-    setDraggedShift(null);
-    setDropZones([]);
+  // Add worker to a day
+  const handleAddWorker = (workerId: string, date: string) => {
+    // Check if worker is available
+    const worker = workers.find(w => w.id === workerId);
+    if (!worker) return;
+
+    // Check day availability
+    const dayNames: DayOfWeek[] = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const dayIndex = new Date(date).getDay();
+    const dayOfWeekKey = dayNames[dayIndex];
+
+    if (!worker.availableDays.includes(dayOfWeekKey)) {
+      alert(`${worker.name} is not available on ${dayOfWeekKey}s`);
+      return;
+    }
+
+    if (worker.holidayDates.includes(date)) {
+      alert(`${worker.name} is on holiday on ${new Date(date).toLocaleDateString()}`);
+      return;
+    }
+
+    // Create a new regular shift (9:30 - 17:30 by default)
+    const newShift: Shift = {
+      id: `shift_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
+      workerId,
+      date,
+      startTime: '09:30',
+      endTime: '17:30',
+      type: 'regular',
+      isRequired: false
+    };
+
+    saveState();
+    const updatedSchedule = {
+      ...schedule,
+      shifts: [...schedule.shifts, newShift],
+      updatedAt: new Date().toISOString()
+    };
+
+    scheduleService.saveSchedule(updatedSchedule);
+    onScheduleUpdate(updatedSchedule);
+    setShowAddWorkerModal(null);
   };
 
-  // Get unique dates from schedule
-  const getUniqueDates = (): string[] => {
-    const dates = [...new Set(schedule.shifts.map(s => s.date))];
-    return dates.sort();
+  // Get available workers for a date
+  const getAvailableWorkers = (date: string): Worker[] => {
+    const dayNames: DayOfWeek[] = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const dayIndex = new Date(date).getDay();
+    const dayOfWeekKey = dayNames[dayIndex];
+
+    return workers.filter(worker => {
+      if (worker.holidayDates.includes(date)) return false;
+      if (!worker.availableDays.includes(dayOfWeekKey)) return false;
+      return true;
+    });
   };
+
+  const dailyStaffing = calculateDailyStaffing();
 
   // Helper to get day label
   const getDayLabel = (date: string): string => {
     const d = new Date(date);
-    return d.toLocaleDateString('en', { weekday: 'short', month: 'short', day: 'numeric' });
+    return d.toLocaleDateString('en', { weekday: 'long', month: 'short', day: 'numeric' });
   };
-
-  const workerHours = calculateWorkerHours();
-  const shiftsByDate = groupShiftsByDate();
-  const uniqueDates = getUniqueDates();
 
   return (
     <div className="max-w-7xl mx-auto p-6 space-y-6">
@@ -250,6 +247,19 @@ const ScheduleEditor: React.FC<ScheduleEditorProps> = ({ schedule, onScheduleUpd
           </div>
 
           <div className="flex items-center space-x-3">
+            {/* Back Button */}
+            {onBack && (
+              <button
+                onClick={onBack}
+                className="flex items-center space-x-2 px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+                <span>Back to Schedule</span>
+              </button>
+            )}
+
             {/* Undo/Redo */}
             <div className="flex items-center space-x-1">
               <button
@@ -277,321 +287,204 @@ const ScheduleEditor: React.FC<ScheduleEditorProps> = ({ schedule, onScheduleUpd
             </button>
           </div>
         </div>
-
-        {/* Edit Mode Toggle */}
-        <div className="mt-4 flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <span className="text-sm font-medium text-gray-700">Editing Mode:</span>
-            <div className="flex items-center space-x-3">
-              <button
-                onClick={() => setEditMode('click')}
-                className={`flex items-center space-x-2 px-3 py-2 rounded-md text-sm transition-colors ${
-                  editMode === 'click'
-                    ? 'bg-blue-100 text-blue-700 border border-blue-300'
-                    : 'bg-gray-100 text-gray-600 border border-gray-300 hover:bg-gray-200'
-                }`}
-              >
-                <Edit3 className="w-4 h-4" />
-                <span>Click to Assign</span>
-              </button>
-
-              <button
-                onClick={() => setEditMode('drag')}
-                className={`flex items-center space-x-2 px-3 py-2 rounded-md text-sm transition-colors ${
-                  editMode === 'drag'
-                    ? 'bg-purple-100 text-purple-700 border border-purple-300'
-                    : 'bg-gray-100 text-gray-600 border border-gray-300 hover:bg-gray-200'
-                }`}
-              >
-                <Move className="w-4 h-4" />
-                <span>Drag & Drop</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Quick Stats */}
-          <div className="text-sm text-gray-600">
-            <span className="mr-4">
-              Assigned: {schedule.shifts.filter(s => s.workerId).length} shifts
-            </span>
-            <span>
-              Unassigned: {schedule.shifts.filter(s => !s.workerId).length} shifts
-            </span>
-          </div>
-        </div>
       </div>
 
-      {/* Worker Status Overview */}
+      {/* Weekly Staffing Overview */}
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
           <Users className="w-5 h-5 mr-2" />
-          Worker Status & Hours
+          Weekly Staffing Overview
         </h3>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {workers.map(worker => {
-            const hours = workerHours[worker.id] || { scheduled: 0, target: 0, percentage: 0 };
-            const percentageUsed = hours.target > 0 ? Math.round((hours.scheduled / hours.target) * 100) : 0;
-
-            let statusColor = 'green';
-            if (percentageUsed > 110) statusColor = 'red';
-            else if (percentageUsed < 80) statusColor = 'yellow';
-
-            return (
-              <div key={worker.id} className="border border-gray-200 rounded-lg p-3">
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="font-medium text-sm">{worker.name}</h4>
+        <div className="grid grid-cols-7 gap-4">
+          {dailyStaffing.map(day => (
+            <div key={day.date} className="text-center">
+              <div className="text-sm font-medium text-gray-700 mb-2">
+                {getDayLabel(day.date)}
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <div className="text-2xl font-bold text-gray-900">{day.totalWorkers}</div>
+                <div className="text-xs text-gray-500">workers</div>
+                <div className="text-sm font-medium text-gray-700 mt-1">{day.totalHours}h</div>
+                <div className="flex justify-center space-x-1 mt-2">
+                  {day.hasOpening && (
+                    <div className="w-2 h-2 bg-green-500 rounded-full" title="Opening covered"></div>
+                  )}
+                  {day.hasClosing && (
+                    <div className="w-2 h-2 bg-blue-500 rounded-full" title="Closing covered"></div>
+                  )}
+                  {day.unassignedShifts.length > 0 && (
+                    <div className="w-2 h-2 bg-red-500 rounded-full" title="Unassigned shifts"></div>
+                  )}
                 </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
 
-                <div className="text-xs text-gray-600 space-y-1">
-                  <div>Target: {hours.target}h ({worker.workPercentage}%)</div>
-                  <div>Scheduled: {hours.scheduled}h</div>
-                  <div className={`flex items-center ${
-                    statusColor === 'green' ? 'text-green-600' :
-                    statusColor === 'yellow' ? 'text-yellow-600' : 'text-red-600'
-                  }`}>
-                    {statusColor === 'green' && <CheckCircle className="w-3 h-3 mr-1" />}
-                    {statusColor === 'yellow' && <AlertTriangle className="w-3 h-3 mr-1" />}
-                    {statusColor === 'red' && <XCircle className="w-3 h-3 mr-1" />}
-                    {percentageUsed}% of target
+      {/* Daily Schedule */}
+      <div className="space-y-4">
+        {dailyStaffing.map(day => (
+          <div key={day.date} className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center space-x-3">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  {getDayLabel(day.date)}
+                </h3>
+                <div className="flex items-center space-x-2 text-sm text-gray-600">
+                  <Users className="w-4 h-4" />
+                  <span>{day.totalWorkers} workers</span>
+                  <Clock className="w-4 h-4 ml-2" />
+                  <span>{day.totalHours}h total</span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowAddWorkerModal({date: day.date})}
+                className="flex items-center space-x-2 px-3 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors"
+              >
+                <UserPlus className="w-4 h-4" />
+                <span>Add Worker</span>
+              </button>
+            </div>
+
+            {/* Worker Assignments */}
+            <div className="space-y-3">
+              {day.shifts.map(workerShift => (
+                <div key={`${workerShift.workerId}-${day.date}`} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                  <div className="flex items-center space-x-4">
+                    <div className="flex items-center space-x-2">
+                      <User className="w-5 h-5 text-gray-600" />
+                      <span className="font-medium text-gray-900">{workerShift.workerName}</span>
+                    </div>
+                    
+                    <div className="flex items-center space-x-4 text-sm text-gray-600">
+                      <div className="flex items-center space-x-1">
+                        <Clock className="w-4 h-4" />
+                        <span>{workerShift.timeRange}</span>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <span className="font-medium">{workerShift.totalHours}h</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      {workerShift.hasOpening && (
+                        <div className="flex items-center space-x-1 text-xs bg-green-100 text-green-800 px-2 py-1 rounded">
+                          <Coffee className="w-3 h-3" />
+                          <span>Opening</span>
+                        </div>
+                      )}
+                      {workerShift.hasClosing && (
+                        <div className="flex items-center space-x-1 text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                          <Moon className="w-3 h-3" />
+                          <span>Closing</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => alert('Individual shift editing will be available soon!')}
+                      className="p-2 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+                      title="Edit worker shift"
+                    >
+                      <Edit3 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleRemoveWorker(workerShift.workerId, day.date)}
+                      className="p-2 text-gray-600 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors"
+                      title="Remove worker"
+                    >
+                      <UserMinus className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+              ))}
 
-      {/* Schedule Grid */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-          <Calendar className="w-5 h-5 mr-2" />
-          Weekly Schedule
-          {editMode === 'click' && <span className="ml-2 text-sm text-blue-600">(Click shifts to assign workers)</span>}
-          {editMode === 'drag' && <span className="ml-2 text-sm text-purple-600">(Drag shifts to move between days)</span>}
-        </h3>
-
-        <div className="grid grid-cols-7 gap-3">
-          {uniqueDates.map(date => {
-            const dayShifts = shiftsByDate[date] || [];
-            const isDropZone = dropZones.includes(date);
-
-            return (
-              <div
-                key={date}
-                className={`border border-gray-200 rounded-lg p-3 min-h-[200px] transition-all ${
-                  isDropZone ? 'border-green-400 bg-green-50' : ''
-                }`}
-                onDragOver={(e) => handleDragOver(e, date)}
-                onDrop={(e) => handleDrop(e, date)}
-              >
-                {/* Day Header */}
-                <div className="text-center mb-3">
-                  <div className="font-semibold text-gray-900">{getDayLabel(date)}</div>
+              {/* Unassigned Shifts */}
+              {day.unassignedShifts.length > 0 && (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="flex items-center space-x-2 mb-2">
+                    <AlertTriangle className="w-5 h-5 text-red-600" />
+                    <span className="font-medium text-red-900">Unassigned Shifts</span>
+                  </div>
+                  <div className="space-y-2">
+                    {day.unassignedShifts.map(shift => (
+                      <div key={shift.id} className="flex items-center justify-between text-sm">
+                        <span className="text-red-700">
+                          {shift.type.charAt(0).toUpperCase() + shift.type.slice(1)} shift: {shift.startTime} - {shift.endTime}
+                        </span>
+                        <button
+                          onClick={() => setShowAddWorkerModal({date: day.date})}
+                          className="text-red-600 hover:text-red-800 font-medium"
+                        >
+                          Assign Worker
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-
-                {/* Shifts */}
-                <div className="space-y-2">
-                  {dayShifts.map(shift => (
-                    <ShiftCard
-                      key={shift.id}
-                      shift={shift}
-                      workers={workers}
-                      availableWorkers={getAvailableWorkers(date, shift.id)}
-                      editMode={editMode}
-                      onWorkerAssignment={handleWorkerAssignment}
-                      onDragStart={handleDragStart}
-                      onDragEnd={handleDragEnd}
-                      isDragging={draggedShift?.id === shift.id}
-                    />
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Help Section */}
-      <div className="bg-gray-50 rounded-lg p-6">
-        <h3 className="font-medium text-gray-900 mb-3">How to Edit Your Schedule</h3>
-
-        <div className="grid md:grid-cols-2 gap-6 text-sm text-gray-600">
-          <div>
-            <h4 className="font-medium text-gray-900 mb-2 flex items-center">
-              <Edit3 className="w-4 h-4 mr-1" />
-              Click to Assign Mode
-            </h4>
-            <ul className="space-y-1">
-              <li>• Click any shift to see available workers</li>
-              <li>• Select a worker from the dropdown</li>
-              <li>• System prevents conflicts automatically</li>
-              <li>• Perfect for quick assignments</li>
-            </ul>
-          </div>
-
-          <div>
-            <h4 className="font-medium text-gray-900 mb-2 flex items-center">
-              <Move className="w-4 h-4 mr-1" />
-              Drag & Drop Mode
-            </h4>
-            <ul className="space-y-1">
-              <li>• Drag shifts between days</li>
-              <li>• Green highlight = valid drop zone</li>
-              <li>• Automatic availability checking</li>
-              <li>• Great for rearranging schedules</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Individual Shift Card Component
-interface ShiftCardProps {
-  shift: Shift;
-  workers: Worker[];
-  availableWorkers: Worker[];
-  editMode: 'click' | 'drag';
-  onWorkerAssignment: (shiftId: string, workerId: string | null) => void;
-  onDragStart: (e: React.DragEvent, shift: Shift) => void;
-  onDragEnd: () => void;
-  isDragging: boolean;
-}
-
-const ShiftCard: React.FC<ShiftCardProps> = ({
-  shift,
-  workers,
-  availableWorkers,
-  editMode,
-  onWorkerAssignment,
-  onDragStart,
-  onDragEnd,
-  isDragging
-}) => {
-  const [showDropdown, setShowDropdown] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  // Close dropdown when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setShowDropdown(false);
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const getShiftTypeColor = (type: string) => {
-    switch (type) {
-      case 'opening': return 'bg-green-100 border-green-300 text-green-800';
-      case 'closing': return 'bg-blue-100 border-blue-300 text-blue-800';
-      default: return 'bg-gray-100 border-gray-300 text-gray-800';
-    }
-  };
-
-  const isAssigned = shift.workerId !== null && shift.workerId !== undefined;
-  const assignedWorker = isAssigned ? workers.find(w => w.id === shift.workerId) : null;
-
-  const start = new Date(`2000-01-01 ${shift.startTime}`);
-  const end = new Date(`2000-01-01 ${shift.endTime}`);
-  const hours = Math.round(((end.getTime() - start.getTime()) / (1000 * 60 * 60)) * 10) / 10;
-
-  return (
-    <div
-      className={`border rounded-md p-2 cursor-pointer transition-all relative ${
-        isDragging ? 'opacity-50 transform rotate-2' : ''
-      } ${
-        isAssigned
-          ? getShiftTypeColor(shift.type)
-          : 'bg-red-50 border-red-300 text-red-800 border-dashed'
-      }`}
-      draggable={editMode === 'drag' && isAssigned}
-      onDragStart={(e) => onDragStart(e, shift)}
-      onDragEnd={onDragEnd}
-      onClick={() => editMode === 'click' && setShowDropdown(true)}
-    >
-      {/* Drag Handle for drag mode */}
-      {editMode === 'drag' && isAssigned && (
-        <div className="absolute top-1 right-1 text-gray-400">
-          <Move className="w-3 h-3" />
-        </div>
-      )}
-
-      {/* Shift Info */}
-      <div className="text-xs font-medium capitalize mb-1">
-        {shift.type}
-      </div>
-
-      <div className="text-xs mb-1">
-        <Clock className="w-3 h-3 inline mr-1" />
-        {shift.startTime} - {shift.endTime} ({hours}h)
-      </div>
-
-      {/* Worker Assignment */}
-      <div className="text-xs">
-        {isAssigned && assignedWorker ? (
-          <div className="flex items-center">
-            <User className="w-3 h-3 mr-1" />
-            {assignedWorker.name}
-          </div>
-        ) : (
-          <div className="flex items-center text-red-600">
-            <AlertTriangle className="w-3 h-3 mr-1" />
-            Unassigned
-          </div>
-        )}
-      </div>
-
-      {/* Click-to-assign dropdown */}
-      {editMode === 'click' && showDropdown && (
-        <div
-          ref={dropdownRef}
-          className="absolute top-full left-0 right-0 z-10 mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-40 overflow-y-auto"
-        >
-          <div className="p-2 border-b border-gray-200 text-xs font-medium text-gray-700">
-            Assign Worker
-          </div>
-
-          {availableWorkers.length === 0 ? (
-            <div className="p-2 text-xs text-gray-500">No available workers</div>
-          ) : (
-            <>
-              {/* Unassign option */}
-              {isAssigned && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onWorkerAssignment(shift.id, null);
-                    setShowDropdown(false);
-                  }}
-                  className="w-full text-left px-2 py-1 text-xs hover:bg-gray-100 text-red-600"
-                >
-                  <XCircle className="w-3 h-3 inline mr-1" />
-                  Unassign
-                </button>
               )}
 
-              {/* Available workers */}
-              {availableWorkers.map(worker => (
+              {/* Empty State */}
+              {day.shifts.length === 0 && day.unassignedShifts.length === 0 && (
+                <div className="text-center py-8 text-gray-500">
+                  <Users className="w-8 h-8 mx-auto mb-2 text-gray-400" />
+                  <p>No workers scheduled for this day</p>
+                  <button
+                    onClick={() => setShowAddWorkerModal({date: day.date})}
+                    className="mt-2 text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    Add a worker
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Add Worker Modal */}
+      {showAddWorkerModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-xl font-bold text-gray-900">
+                Add Worker - {getDayLabel(showAddWorkerModal.date)}
+              </h2>
+              <button
+                onClick={() => setShowAddWorkerModal(null)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <XCircle className="w-6 h-6" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {getAvailableWorkers(showAddWorkerModal.date).map(worker => (
                 <button
                   key={worker.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onWorkerAssignment(shift.id, worker.id);
-                    setShowDropdown(false);
-                  }}
-                  className="w-full text-left px-2 py-1 text-xs hover:bg-blue-50 flex items-center justify-between"
+                  onClick={() => handleAddWorker(worker.id, showAddWorkerModal.date)}
+                  className="w-full text-left p-3 border border-gray-200 rounded-md hover:bg-blue-50 hover:border-blue-300 transition-colors"
                 >
-                  <span>{worker.name}</span>
-                  <span className="text-gray-500">({worker.workPercentage}%)</span>
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium text-gray-900">{worker.name}</span>
+                    <span className="text-sm text-gray-500">{worker.workPercentage}%</span>
+                  </div>
                 </button>
               ))}
-            </>
-          )}
+
+              {getAvailableWorkers(showAddWorkerModal.date).length === 0 && (
+                <div className="text-center py-4 text-gray-500">
+                  <p>No available workers for this date</p>
+                  <p className="text-sm">Check worker availability and holidays</p>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

@@ -9,15 +9,13 @@ import {
   CheckCircle,
   RefreshCw,
   Download,
-  ChevronRight,
-  ToggleLeft,
-  ToggleRight,
   Edit3
 } from 'lucide-react';
 
 import { scheduleService } from '../services/scheduleService';
 import { workerService } from '../services/workerService';
 import ImprovedScheduleDisplay from './ImprovedScheduleDisplay';
+import ScheduleEditor from './ScheduleEditor';
 import type { Schedule, Worker } from '../types';
 
 interface ScheduleGenerationProps {
@@ -29,7 +27,7 @@ const ScheduleGeneration: React.FC<ScheduleGenerationProps> = ({ onScheduleGener
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [currentSchedule, setCurrentSchedule] = useState<Schedule | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [useImprovedDisplay, setUseImprovedDisplay] = useState(true);
+  const [isEditing, setIsEditing] = useState(false);
 
   // Load workers and set default week on component mount
   useEffect(() => {
@@ -94,6 +92,21 @@ const ScheduleGeneration: React.FC<ScheduleGenerationProps> = ({ onScheduleGener
       onScheduleGenerated(updatedSchedule);
     }
   };
+
+  const handleExitEditing = () => {
+    setIsEditing(false);
+  };
+
+  // Show schedule editor when in editing mode
+  if (isEditing && currentSchedule) {
+    return (
+      <ScheduleEditor
+        schedule={currentSchedule}
+        onScheduleUpdate={handleScheduleUpdate}
+        onBack={handleExitEditing}
+      />
+    );
+  }
 
   return (
     <div className="container py-8">
@@ -196,21 +209,13 @@ const ScheduleGeneration: React.FC<ScheduleGenerationProps> = ({ onScheduleGener
                 <div className="flex items-center space-x-3">
                   {/* Edit Button */}
                   <button
-                    onClick={() => onScheduleGenerated && onScheduleGenerated(currentSchedule)}
+                    onClick={() => setIsEditing(true)}
                     className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 transition-colors"
                   >
                     <Edit3 className="w-4 h-4" />
                     <span>Edit Schedule</span>
                   </button>
 
-                  {/* Display Toggle */}
-                  <button
-                    onClick={() => setUseImprovedDisplay(!useImprovedDisplay)}
-                    className="flex items-center space-x-2 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
-                  >
-                    {useImprovedDisplay ? <ToggleRight className="w-4 h-4 text-blue-600" /> : <ToggleLeft className="w-4 h-4" />}
-                    <span>{useImprovedDisplay ? 'Worker-Centric View' : 'Traditional View'}</span>
-                  </button>
 
                   <button className="flex items-center space-x-2 px-3 py-1.5 text-sm text-blue-600 border border-blue-300 rounded-md hover:bg-blue-50 transition-colors">
                     <Download className="w-4 h-4" />
@@ -219,64 +224,14 @@ const ScheduleGeneration: React.FC<ScheduleGenerationProps> = ({ onScheduleGener
                 </div>
               </div>
 
-              {/* Feature Comparison */}
-              <div className="mt-4 grid md:grid-cols-2 gap-4 text-sm">
-                <div className={`p-3 rounded-md ${useImprovedDisplay ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 border border-gray-200'}`}>
-                  <h4 className="font-medium text-gray-900 mb-2">Worker-Centric View</h4>
-                  <ul className="space-y-1 text-gray-600">
-                    <li className="flex items-center space-x-2">
-                      <ChevronRight className="w-3 h-3" />
-                      <span><strong>Continuous work blocks</strong> instead of fragmented shifts</span>
-                    </li>
-                    <li className="flex items-center space-x-2">
-                      <ChevronRight className="w-3 h-3" />
-                      <span><strong>Clear daily hours</strong> for each worker</span>
-                    </li>
-                    <li className="flex items-center space-x-2">
-                      <ChevronRight className="w-3 h-3" />
-                      <span><strong>Better preparation</strong> for drag-and-drop editing</span>
-                    </li>
-                  </ul>
-                </div>
-
-                <div className={`p-3 rounded-md ${!useImprovedDisplay ? 'bg-blue-50 border border-blue-200' : 'bg-gray-50 border border-gray-200'}`}>
-                  <h4 className="font-medium text-gray-900 mb-2">Traditional View</h4>
-                  <ul className="space-y-1 text-gray-600">
-                    <li className="flex items-center space-x-2">
-                      <ChevronRight className="w-3 h-3" />
-                      <span><strong>Individual shifts</strong> shown separately</span>
-                    </li>
-                    <li className="flex items-center space-x-2">
-                      <ChevronRight className="w-3 h-3" />
-                      <span><strong>Detailed shift types</strong> (opening, closing)</span>
-                    </li>
-                    <li className="flex items-center space-x-2">
-                      <ChevronRight className="w-3 h-3" />
-                      <span><strong>Technical view</strong> for debugging</span>
-                    </li>
-                  </ul>
-                </div>
-              </div>
             </div>
 
             {/* Schedule Display */}
-            {useImprovedDisplay ? (
-              <ImprovedScheduleDisplay
-                schedule={currentSchedule}
-                workers={workers}
-                onScheduleUpdate={handleScheduleUpdate}
-              />
-            ) : (
-              <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Traditional Schedule View</h3>
-                <div className="grid grid-cols-7 gap-4">
-                  {/* Traditional grid view would go here */}
-                  <div className="col-span-7 text-center text-gray-500 py-8">
-                    Traditional view implementation coming soon...
-                  </div>
-                </div>
-              </div>
-            )}
+            <ImprovedScheduleDisplay
+              schedule={currentSchedule}
+              workers={workers}
+              onScheduleUpdate={handleScheduleUpdate}
+            />
           </>
         )}
 
