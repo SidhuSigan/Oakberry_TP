@@ -32,6 +32,7 @@ interface ShiftTemplate {
   type: ShiftType;
   minWorkers: number;
   maxWorkers: number;
+  priority: 'high' | 'medium' | 'low'; // Business priority for this time slot
 }
 
 class ScheduleService {
@@ -54,7 +55,7 @@ class ScheduleService {
     return monday.toISOString().split('T')[0];
   }
 
-  // Create shift templates based on store hours
+  // Create shift templates based on store hours and business demands
   private createShiftTemplates(): ShiftTemplate[] {
     const templates: ShiftTemplate[] = [];
 
@@ -63,50 +64,68 @@ class ScheduleService {
 
       const openTime = storeHour.open;
       const closeTime = storeHour.close;
+      const isWeekend = storeHour.day === 'saturday' || storeHour.day === 'sunday';
+      const isLongDay = storeHour.day === 'thursday' || storeHour.day === 'friday' || isWeekend;
 
-      // Opening shift: 30 minutes before store opens until 2 hours after
-      const openingStart = this.subtractMinutes(openTime, 30);
-      const openingEnd = this.addHours(openTime, 2);
-
+      // OPENING PERIOD (9:00-11:00) - 1 person sufficient for setup
       templates.push({
         day: storeHour.day,
-        startTime: openingStart,
-        endTime: openingEnd,
+        startTime: this.subtractMinutes(openTime, 30), // 09:00
+        endTime: this.addHours(openTime, 1.5), // 11:00
         type: 'opening',
         minWorkers: 1,
-        maxWorkers: 1
+        maxWorkers: 1,
+        priority: 'medium'
       });
 
-      // Middle shifts during operating hours (if store is open long enough)
-      const totalHours = this.getHoursBetween(openTime, closeTime);
-      if (totalHours > 6) {
-        // Create middle shifts
-        let currentTime = this.addHours(openTime, 1);
-        while (this.getHoursBetween(currentTime, closeTime) > 3) {
-          const shiftEnd = this.addHours(currentTime, 4);
-          templates.push({
-            day: storeHour.day,
-            startTime: currentTime,
-            endTime: shiftEnd,
-            type: 'regular',
-            minWorkers: 1,
-            maxWorkers: 2
-          });
-          currentTime = this.addHours(currentTime, 2);
-        }
+      // LUNCH RUSH (11:00-15:00) - High demand period
+      templates.push({
+        day: storeHour.day,
+        startTime: this.addHours(openTime, 1.5), // 11:00
+        endTime: this.addHours(openTime, 5.5), // 15:00
+        type: 'regular',
+        minWorkers: isWeekend ? 4 : 3, // Sunday = 4 people, weekdays = 3 people
+        maxWorkers: isWeekend ? 5 : 4,
+        priority: 'high'
+      });
+
+      // AFTERNOON (15:00-17:00) - Moderate demand
+      templates.push({
+        day: storeHour.day,
+        startTime: this.addHours(openTime, 5.5), // 15:00
+        endTime: this.addHours(openTime, 7.5), // 17:00
+        type: 'regular',
+        minWorkers: isWeekend ? 3 : 2,
+        maxWorkers: isWeekend ? 4 : 3,
+        priority: 'medium'
+      });
+
+      // EVENING RUSH (17:00-19:30) - High demand again
+      if (isLongDay) {
+        templates.push({
+          day: storeHour.day,
+          startTime: this.addHours(openTime, 7.5), // 17:00
+          endTime: this.addHours(openTime, 10), // 19:30
+          type: 'regular',
+          minWorkers: isWeekend ? 4 : 3,
+          maxWorkers: isWeekend ? 5 : 4,
+          priority: 'high'
+        });
       }
 
-      // Closing shift: 2 hours before close until 30 minutes after
-      const closingStart = this.subtractHours(closeTime, 2);
-      const closingEnd = this.addMinutes(closeTime, 30);
+      // CLOSING PERIOD - 2 people for cleaning and closing tasks
+      const closingStart = isLongDay ?
+        this.addHours(openTime, 10) : // 19:30 for long days
+        this.addHours(openTime, 7.5);  // 17:00 for short days
 
       templates.push({
         day: storeHour.day,
         startTime: closingStart,
-        endTime: closingEnd,
+        endTime: this.addMinutes(closeTime, 30), // 30min after close
         type: 'closing',
-        minWorkers: 2, // 2 people for closing
-        maxWorkers: 2
+        minWorkers: 2,
+        maxWorkers: 3, // Extra person on busy days
+        priority: 'high'
       });
     });
 
@@ -130,9 +149,9 @@ class ScheduleService {
     return this.addMinutes(time, hours * 60);
   }
 
-  private subtractHours(time: string, hours: number): string {
-    return this.addMinutes(time, -hours * 60);
-  }
+//   private subtractHours(time: string, hours: number): string {
+//     return this.addMinutes(time, -hours * 60);
+//   }
 
   private getHoursBetween(startTime: string, endTime: string): number {
     const [startHour, startMin] = startTime.split(':').map(Number);
@@ -148,7 +167,7 @@ class ScheduleService {
     return this.getHoursBetween(shift.startTime, shift.endTime);
   }
 
-  // Get available workers for a specific date and shift
+  // Get available workers for a specific date and shift (now allows concurrent assignments)
   private getAvailableWorkersForShift(date: string, excludeWorkerIds: string[] = []): Worker[] {
     const dayOfWeek = getDayOfWeek(date);
     const availableWorkers = workerService.getAvailableWorkers(date);
@@ -176,31 +195,54 @@ class ScheduleService {
     const shiftHours = this.getHoursBetween(shift.startTime, shift.endTime);
     const newTotalHours = currentHours + shiftHours;
 
-    // Prefer workers who are under their target hours
-    if (newTotalHours <= targetHours) {
-      score += 50; // Bonus for staying under target
+    // Strong preference for workers who are significantly under their target
+    const hoursRemaining = Math.max(0, targetHours - currentHours);
+
+    if (hoursRemaining >= shiftHours) {
+      // Worker is well under target - strong bonus
+      score += 100;
+    } else if (hoursRemaining > 0) {
+      // Worker is slightly under target - moderate bonus
+      score += 50;
+    } else if (newTotalHours <= targetHours + 2) {
+      // Worker would be slightly over target - small bonus
+      score += 20;
+    } else if (newTotalHours <= targetHours + 5) {
+      // Worker would be moderately over target - neutral
+      score += 0;
     } else {
-      // Penalty for going over target (but still possible if needed)
-      const overagePercent = ((newTotalHours - targetHours) / targetHours) * 100;
-      score -= overagePercent * 2;
+      // Worker would be significantly over target - penalty
+      const overage = newTotalHours - targetHours;
+      score -= overage * 10;
     }
 
-    // Balance workload - prefer workers with fewer hours this week
-    const hoursRatio = currentHours / Math.max(targetHours, 1);
-    score += (1 - hoursRatio) * 30;
+    // Balance workload across team - prefer workers with fewer current hours
+    const weeklyHoursRatio = currentHours / Math.max(targetHours, 1);
+    score += (1 - weeklyHoursRatio) * 50;
 
-    // Slight preference for higher work percentage workers for important shifts
+    // Preference for higher work percentage workers for critical shifts
     if (shift.type === 'opening' || shift.type === 'closing') {
-      score += worker.workPercentage * 0.2;
+      score += worker.workPercentage * 0.3;
     }
 
-    // Check if worker has worked the day before (avoid consecutive days if possible)
+    // Avoid consecutive days when possible (but don't make it a hard constraint)
     const previousDate = this.getPreviousDay(date);
+    const nextDate = this.getNextDay(date);
+
     const workedPreviousDay = existingShifts.some(s =>
       s.workerId === worker.id && s.date === previousDate
     );
-    if (workedPreviousDay) {
-      score -= 10; // Small penalty for consecutive days
+    const workedNextDay = existingShifts.some(s =>
+      s.workerId === worker.id && s.date === nextDate
+    );
+
+    if (workedPreviousDay || workedNextDay) {
+      score -= 15; // Penalty for consecutive days
+    }
+
+    // Slight preference for workers who haven't worked this week yet
+    if (currentHours === 0) {
+      score += 25;
     }
 
     return Math.max(0, score);
@@ -213,7 +255,14 @@ class ScheduleService {
     return d.toISOString().split('T')[0];
   }
 
-  // Assign workers to a shift
+  // Get next day
+  private getNextDay(date: string): string {
+    const d = new Date(date);
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  }
+
+  // Assign workers to a shift (now handles multiple concurrent workers)
   private assignWorkersToShift(
     shiftTemplate: ShiftTemplate,
     date: string,
@@ -227,16 +276,19 @@ class ScheduleService {
     );
 
     if (availableWorkers.length === 0) {
-      // Create unassigned shift
-      return [{
-        id: this.generateShiftId(),
-        date,
-        startTime: shiftTemplate.startTime,
-        endTime: shiftTemplate.endTime,
-        type: shiftTemplate.type,
-        isRequired: shiftTemplate.minWorkers > 0,
-        workerId: undefined
-      }];
+      // Create unassigned shifts for the minimum required workers
+      for (let i = 0; i < shiftTemplate.minWorkers; i++) {
+        shifts.push({
+          id: this.generateShiftId(),
+          date,
+          startTime: shiftTemplate.startTime,
+          endTime: shiftTemplate.endTime,
+          type: shiftTemplate.type,
+          isRequired: true,
+          workerId: undefined
+        });
+      }
+      return shifts;
     }
 
     // Score and sort workers
@@ -247,11 +299,33 @@ class ScheduleService {
       }))
       .sort((a, b) => b.score - a.score);
 
-    // Assign workers based on min/max requirements
-    const workersNeeded = Math.min(shiftTemplate.maxWorkers, Math.max(shiftTemplate.minWorkers, 1));
+    // Determine how many workers to assign based on template and availability
+    let workersToAssign = Math.min(
+      shiftTemplate.maxWorkers,
+      Math.max(shiftTemplate.minWorkers, availableWorkers.length)
+    );
 
-    for (let i = 0; i < workersNeeded && i < scoredWorkers.length; i++) {
+    // For high-priority shifts (lunch/dinner rush), try to assign maximum workers
+    if (shiftTemplate.priority === 'high') {
+      workersToAssign = Math.min(shiftTemplate.maxWorkers, availableWorkers.length);
+    }
+
+    // Assign workers up to the determined amount
+    let assignedCount = 0;
+    for (let i = 0; i < workersToAssign && i < scoredWorkers.length; i++) {
       const { worker } = scoredWorkers[i];
+
+      // Check if this worker would go extremely over their target
+      const currentHours = this.getWorkerWeeklyHours(worker.id, existingShifts);
+      const targetHours = calculateTargetHours(worker.workPercentage);
+      const shiftHours = this.getHoursBetween(shiftTemplate.startTime, shiftTemplate.endTime);
+      const newTotalHours = currentHours + shiftHours;
+
+      // Allow flexibility but prevent extreme overages (only skip if we have enough coverage)
+      const overage = newTotalHours - targetHours;
+      if (overage > 12 && assignedCount >= shiftTemplate.minWorkers) {
+        continue; // Skip this worker
+      }
 
       shifts.push({
         id: this.generateShiftId(),
@@ -259,11 +333,25 @@ class ScheduleService {
         startTime: shiftTemplate.startTime,
         endTime: shiftTemplate.endTime,
         type: shiftTemplate.type,
-        isRequired: i < shiftTemplate.minWorkers,
+        isRequired: assignedCount < shiftTemplate.minWorkers,
         workerId: worker.id
       });
 
       assignedWorkerIds.add(worker.id);
+      assignedCount++;
+    }
+
+    // If we couldn't assign enough workers for minimum requirements, create unassigned shifts
+    for (let i = assignedCount; i < shiftTemplate.minWorkers; i++) {
+      shifts.push({
+        id: this.generateShiftId(),
+        date,
+        startTime: shiftTemplate.startTime,
+        endTime: shiftTemplate.endTime,
+        type: shiftTemplate.type,
+        isRequired: true,
+        workerId: undefined
+      });
     }
 
     return shifts;
@@ -284,12 +372,9 @@ class ScheduleService {
       const dayOfWeek = getDayOfWeek(dateString);
       const dayTemplates = shiftTemplates.filter(template => template.day === dayOfWeek);
 
-      // Track assigned workers for this day to avoid double-booking
-      const assignedWorkerIds = new Set<string>();
-
-      // Process each shift template for this day
+      // For each shift time slot, we can assign multiple workers concurrently
       dayTemplates.forEach(template => {
-        const dayShifts = this.assignWorkersToShift(template, dateString, shifts, assignedWorkerIds);
+        const dayShifts = this.assignWorkersToShift(template, dateString, shifts, new Set());
         shifts.push(...dayShifts);
       });
     }
@@ -302,7 +387,7 @@ class ScheduleService {
       isGenerated: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      notes: `Auto-generated schedule for week of ${weekStart}`
+      notes: `Auto-generated schedule for week of ${weekStart} - Oakberry Açaí Bowl Shop`
     };
 
     return schedule;
@@ -409,8 +494,8 @@ class ScheduleService {
       return { canGenerate: false, issues };
     }
 
-    if (activeWorkers.length < 2) {
-      issues.push('At least 2 active workers are recommended for proper coverage');
+    if (activeWorkers.length < 3) {
+      issues.push('At least 3 active workers are recommended for proper açaí bowl shop coverage');
     }
 
     // Check each day for minimum coverage
