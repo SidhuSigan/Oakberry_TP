@@ -1,4 +1,4 @@
-import React from 'react';
+// import React from 'react';
 import { Calendar, Users, Settings } from 'lucide-react';
 
 function App() {
