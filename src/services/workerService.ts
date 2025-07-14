@@ -208,6 +208,14 @@ class WorkerService {
     return { success: true };
   }
 
+  toggleWorkerStatus(workerId: string): { success: boolean; error?: string } {
+    const worker = this.getWorkerById(workerId);
+    if (!worker) return { success: false, error: 'Worker not found' };
+
+    const updatedWorker = { ...worker, isActive: !worker.isActive };
+    return this.updateWorker(workerId, updatedWorker);
+  }
+
   // Add holiday date for worker
   addHolidayDate(workerId: string, date: string): { success: boolean; error?: string } {
     const worker = storageService.getWorkerById(workerId);

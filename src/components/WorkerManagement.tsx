@@ -1,10 +1,34 @@
-// Worker Management Component
-// Location: src/components/WorkerManagement.tsx
-
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, Phone, Mail, Users } from 'lucide-react';
-import type { Worker, WorkerFormData, DayOfWeek, ValidationError } from '../types';
-import { workerService } from '../services/workerService';
+import { Plus, Edit2, Phone, Mail, Users, ToggleLeft, ToggleRight, Eye, EyeOff, AlertTriangle } from 'lucide-react';
+
+// Mock data and types (in real app these would come from your actual files)
+type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
+
+interface Worker {
+  id: string;
+  name: string;
+  phone: string;
+  email?: string;
+  workPercentage: number;
+  availableDays: DayOfWeek[];
+  holidayDates: string[];
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface WorkerFormData {
+  name: string;
+  phone: string;
+  email?: string;
+  workPercentage: number;
+  availableDays: DayOfWeek[];
+}
+
+// interface ValidationError {
+//   field: string;
+//   message: string;
+// }
 
 const DAYS_OF_WEEK: { key: DayOfWeek; label: string }[] = [
   { key: 'monday', label: 'Monday' },
@@ -16,10 +40,59 @@ const DAYS_OF_WEEK: { key: DayOfWeek; label: string }[] = [
   { key: 'sunday', label: 'Sunday' },
 ];
 
-const WorkerManagement: React.FC = () => {
+// Mock service
+const mockWorkerService = {
+  getAllWorkers: () => [
+    {
+      id: '1',
+      name: 'Anna Mueller',
+      phone: '+41 79 123 4567',
+      email: 'anna@example.com',
+      workPercentage: 100,
+      availableDays: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'] as DayOfWeek[],
+      holidayDates: [],
+      isActive: true,
+      createdAt: '2024-01-15T10:00:00Z',
+      updatedAt: '2024-01-15T10:00:00Z'
+    },
+    {
+      id: '2',
+      name: 'Marco Rossi',
+      phone: '+41 79 234 5678',
+      email: 'marco@example.com',
+      workPercentage: 60,
+      availableDays: ['tuesday', 'wednesday', 'thursday', 'saturday', 'sunday'] as DayOfWeek[],
+      holidayDates: [],
+      isActive: true,
+      createdAt: '2024-01-10T09:00:00Z',
+      updatedAt: '2024-01-10T09:00:00Z'
+    },
+    {
+      id: '3',
+      name: 'Sarah Johnson',
+      phone: '+41 79 345 6789',
+      email: 'sarah@example.com',
+      workPercentage: 80,
+      availableDays: ['monday', 'wednesday', 'friday', 'saturday', 'sunday'] as DayOfWeek[],
+      holidayDates: [],
+      isActive: false,
+      createdAt: '2024-01-05T14:00:00Z',
+      updatedAt: '2024-01-20T11:30:00Z'
+    }
+  ],
+  getWorkerStats: () => ({
+    total: 3,
+    active: 2,
+    inactive: 1,
+    averageWorkPercentage: 80
+  })
+};
+
+const ImprovedWorkerManagement: React.FC = () => {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingWorker, setEditingWorker] = useState<Worker | null>(null);
+  const [showInactive, setShowInactive] = useState(false);
   const [formData, setFormData] = useState<WorkerFormData>({
     name: '',
     phone: '',
@@ -27,7 +100,7 @@ const WorkerManagement: React.FC = () => {
     workPercentage: 100,
     availableDays: [],
   });
-  const [errors, setErrors] = useState<ValidationError[]>([]);
+//   const [errors, setErrors] = useState<ValidationError[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Load workers on component mount
@@ -36,7 +109,7 @@ const WorkerManagement: React.FC = () => {
   }, []);
 
   const loadWorkers = () => {
-    const allWorkers = workerService.getAllWorkers();
+    const allWorkers = mockWorkerService.getAllWorkers();
     setWorkers(allWorkers);
   };
 
@@ -48,7 +121,7 @@ const WorkerManagement: React.FC = () => {
       workPercentage: 100,
       availableDays: [],
     });
-    setErrors([]);
+    // setErrors([]);
     setEditingWorker(null);
     setShowForm(false);
   };
@@ -67,48 +140,81 @@ const WorkerManagement: React.FC = () => {
       availableDays: [...worker.availableDays],
     });
     setEditingWorker(worker);
-    setErrors([]);
+    // setErrors([]);
     setShowForm(true);
   };
 
-  const handleDeleteWorker = async (workerId: string) => {
-    if (!window.confirm('Are you sure you want to delete this worker?')) {
+  // Toggle worker active status (soft delete/reactivate)
+  const handleToggleWorkerStatus = async (workerId: string, currentStatus: boolean) => {
+    const worker = workers.find(w => w.id === workerId);
+    if (!worker) return;
+
+    // const action = currentStatus ? 'deactivate' : 'reactivate';
+    const message = currentStatus
+      ? `Deactivate ${worker.name}? They will no longer be available for new schedules, but their data will be preserved.`
+      : `Reactivate ${worker.name}? They will be available for new schedule assignments.`;
+
+    if (!window.confirm(message)) {
       return;
     }
 
-    const result = workerService.deleteWorker(workerId);
-    if (result.success) {
-      loadWorkers();
-    } else {
-      alert(`Error: ${result.error}`);
+    // Simulate API call
+    const updatedWorkers = workers.map(w =>
+      w.id === workerId
+        ? { ...w, isActive: !currentStatus, updatedAt: new Date().toISOString() }
+        : w
+    );
+    setWorkers(updatedWorkers);
+  };
+
+  // Permanent delete (hard delete)
+  const handlePermanentDelete = async (workerId: string) => {
+    const worker = workers.find(w => w.id === workerId);
+    if (!worker) return;
+
+    const message = `⚠️ PERMANENTLY DELETE ${worker.name}?\n\nThis will completely remove all their data including:\n- Personal information\n- Work history\n- Schedule assignments\n- Arbeitspensum records\n\nThis action CANNOT be undone!\n\nType "${worker.name}" to confirm:`;
+
+    const confirmation = window.prompt(message);
+    if (confirmation !== worker.name) {
+      if (confirmation !== null) {
+        alert('Name did not match. Deletion cancelled.');
+      }
+      return;
     }
+
+    // Simulate API call
+    const updatedWorkers = workers.filter(w => w.id !== workerId);
+    setWorkers(updatedWorkers);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
-    setErrors([]);
+    // setErrors([]);
 
-    try {
-      let result;
-
+    // Simulate form submission
+    setTimeout(() => {
       if (editingWorker) {
-        result = workerService.updateWorker(editingWorker.id, formData);
+        const updatedWorkers = workers.map(w =>
+          w.id === editingWorker.id
+            ? { ...w, ...formData, updatedAt: new Date().toISOString() }
+            : w
+        );
+        setWorkers(updatedWorkers);
       } else {
-        result = workerService.createWorker(formData);
+        const newWorker: Worker = {
+          id: Date.now().toString(),
+          ...formData,
+          holidayDates: [],
+          isActive: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+        setWorkers([...workers, newWorker]);
       }
-
-      if (result.success) {
-        loadWorkers();
-        resetForm();
-      } else {
-        setErrors(result.errors || []);
-      }
-    } catch (error) {
-      setErrors([{ field: 'general', message: 'An unexpected error occurred' }]);
-    } finally {
+      resetForm();
       setIsSubmitting(false);
-    }
+    }, 1000);
   };
 
   const handleDayToggle = (day: DayOfWeek) => {
@@ -120,15 +226,20 @@ const WorkerManagement: React.FC = () => {
     }));
   };
 
-  const getFieldError = (fieldName: string): string | undefined => {
-    return errors.find(e => e.field === fieldName)?.message;
-  };
+//   const getFieldError = (fieldName: string): string | undefined => {
+//     return errors.find(e => e.field === fieldName)?.message;
+//   };
 
-  const getWorkerStats = () => {
-    return workerService.getWorkerStats();
+  const stats = {
+    total: workers.length,
+    active: workers.filter(w => w.isActive).length,
+    inactive: workers.filter(w => !w.isActive).length,
+    averageWorkPercentage: workers.filter(w => w.isActive).length > 0
+        ? Math.round(workers.filter(w => w.isActive).reduce((sum, w) => sum + w.workPercentage, 0) / workers.filter(w => w.isActive).length)
+        : 0
   };
-
-  const stats = getWorkerStats();
+  const filteredWorkers = showInactive ? workers : workers.filter(w => w.isActive);
+  const inactiveCount = workers.filter(w => !w.isActive).length;
 
   return (
     <div className="container py-8">
@@ -141,7 +252,7 @@ const WorkerManagement: React.FC = () => {
           </div>
           <button
             onClick={handleAddWorker}
-            className="btn-primary flex items-center space-x-2"
+            className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors flex items-center space-x-2"
           >
             <Plus className="w-4 h-4" />
             <span>Add Worker</span>
@@ -150,16 +261,16 @@ const WorkerManagement: React.FC = () => {
 
         {/* Statistics Cards */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <div className="card">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
             <div className="flex items-center space-x-3">
-              <Users className="w-8 h-8 text-primary-600" />
+              <Users className="w-8 h-8 text-blue-600" />
               <div>
                 <p className="text-sm text-gray-600">Total Workers</p>
                 <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
               </div>
             </div>
           </div>
-          <div className="card">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
             <div className="flex items-center space-x-3">
               <div className="w-3 h-3 bg-green-500 rounded-full"></div>
               <div>
@@ -168,7 +279,7 @@ const WorkerManagement: React.FC = () => {
               </div>
             </div>
           </div>
-          <div className="card">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
             <div className="flex items-center space-x-3">
               <div className="w-3 h-3 bg-gray-400 rounded-full"></div>
               <div>
@@ -177,14 +288,31 @@ const WorkerManagement: React.FC = () => {
               </div>
             </div>
           </div>
-          <div className="card">
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
             <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-primary-100 rounded-lg flex items-center justify-center">
-                <span className="text-sm font-semibold text-primary-600">%</span>
+              <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+                <span className="text-sm font-semibold text-blue-600">%</span>
               </div>
               <div>
                 <p className="text-sm text-gray-600">Avg. Arbeitspensum</p>
                 <p className="text-2xl font-bold text-gray-900">{stats.averageWorkPercentage}%</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Explanation Card for Active/Inactive System */}
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+          <div className="flex items-start space-x-3">
+            <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+              <span className="text-white text-xs">i</span>
+            </div>
+            <div>
+              <h4 className="font-medium text-blue-900 mb-2">About Active/Inactive Status</h4>
+              <div className="text-sm text-blue-800 space-y-1">
+                <p><strong>Active workers:</strong> Available for new schedules, counted in statistics, can receive shifts</p>
+                <p><strong>Inactive workers:</strong> Temporarily unavailable (vacation, leave, etc.) but data is preserved for history</p>
+                <p><strong>Why keep inactive workers?</strong> Scheduling systems need historical data for Arbeitspensum tracking, audits, and potential reactivation</p>
               </div>
             </div>
           </div>
@@ -199,14 +327,7 @@ const WorkerManagement: React.FC = () => {
                   {editingWorker ? 'Edit Worker' : 'Add New Worker'}
                 </h2>
 
-                <form onSubmit={handleSubmit} className="space-y-6">
-                  {/* General Error */}
-                  {getFieldError('general') && (
-                    <div className="bg-red-50 border border-red-200 rounded-md p-4">
-                      <p className="text-sm text-red-600">{getFieldError('general')}</p>
-                    </div>
-                  )}
-
+                <div className="space-y-6">
                   {/* Name */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -216,14 +337,10 @@ const WorkerManagement: React.FC = () => {
                       type="text"
                       value={formData.name}
                       onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                      className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${
-                        getFieldError('name') ? 'border-red-300' : 'border-gray-300'
-                      }`}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="Enter worker name"
+                      required
                     />
-                    {getFieldError('name') && (
-                      <p className="mt-1 text-sm text-red-600">{getFieldError('name')}</p>
-                    )}
                   </div>
 
                   {/* Phone */}
@@ -235,14 +352,10 @@ const WorkerManagement: React.FC = () => {
                       type="tel"
                       value={formData.phone}
                       onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
-                      className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${
-                        getFieldError('phone') ? 'border-red-300' : 'border-gray-300'
-                      }`}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="Enter phone number"
+                      required
                     />
-                    {getFieldError('phone') && (
-                      <p className="mt-1 text-sm text-red-600">{getFieldError('phone')}</p>
-                    )}
                   </div>
 
                   {/* Email */}
@@ -254,14 +367,9 @@ const WorkerManagement: React.FC = () => {
                       type="email"
                       value={formData.email}
                       onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
-                      className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${
-                        getFieldError('email') ? 'border-red-300' : 'border-gray-300'
-                      }`}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="Enter email address (optional)"
                     />
-                    {getFieldError('email') && (
-                      <p className="mt-1 text-sm text-red-600">{getFieldError('email')}</p>
-                    )}
                   </div>
 
                   {/* Work Percentage */}
@@ -275,14 +383,10 @@ const WorkerManagement: React.FC = () => {
                       max="100"
                       value={formData.workPercentage}
                       onChange={(e) => setFormData(prev => ({ ...prev, workPercentage: parseInt(e.target.value) || 0 }))}
-                      className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 ${
-                        getFieldError('workPercentage') ? 'border-red-300' : 'border-gray-300'
-                      }`}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="100"
+                      required
                     />
-                    {getFieldError('workPercentage') && (
-                      <p className="mt-1 text-sm text-red-600">{getFieldError('workPercentage')}</p>
-                    )}
                     <p className="mt-1 text-sm text-gray-500">
                       Target hours per week: {Math.round((formData.workPercentage / 100) * 40)}
                     </p>
@@ -300,15 +404,12 @@ const WorkerManagement: React.FC = () => {
                             type="checkbox"
                             checked={formData.availableDays.includes(key)}
                             onChange={() => handleDayToggle(key)}
-                            className="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500"
+                            className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                           />
                           <span className="text-sm text-gray-700">{label}</span>
                         </label>
                       ))}
                     </div>
-                    {getFieldError('availableDays') && (
-                      <p className="mt-1 text-sm text-red-600">{getFieldError('availableDays')}</p>
-                    )}
                   </div>
 
                   {/* Form Actions */}
@@ -321,37 +422,51 @@ const WorkerManagement: React.FC = () => {
                       Cancel
                     </button>
                     <button
-                      type="submit"
+                      type="button"
+                      onClick={handleSubmit}
                       disabled={isSubmitting}
-                      className="btn-primary flex items-center space-x-2"
+                      className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors flex items-center space-x-2"
                     >
-                      {isSubmitting && <div className="spinner w-4 h-4"></div>}
+                      {isSubmitting && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>}
                       <span>{editingWorker ? 'Update Worker' : 'Add Worker'}</span>
                     </button>
                   </div>
-                </form>
+                </div>
               </div>
             </div>
           </div>
         )}
 
         {/* Workers List */}
-        <div className="card">
-          <div className="flex items-center justify-between mb-4">
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between mb-6">
             <h2 className="text-lg font-semibold text-gray-900">Team Members</h2>
-            <span className="text-sm text-gray-500">
-              {workers.filter(w => w.isActive).length} active workers
-            </span>
+            <div className="flex items-center space-x-4">
+              {inactiveCount > 0 && (
+                <button
+                  onClick={() => setShowInactive(!showInactive)}
+                  className="flex items-center space-x-2 text-sm text-gray-600 hover:text-gray-800 transition-colors"
+                >
+                  {showInactive ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  <span>
+                    {showInactive ? 'Hide' : 'Show'} Inactive ({inactiveCount})
+                  </span>
+                </button>
+              )}
+              <span className="text-sm text-gray-500">
+                {filteredWorkers.filter(w => w.isActive).length} active workers
+              </span>
+            </div>
           </div>
 
-          {workers.length === 0 ? (
+          {filteredWorkers.length === 0 ? (
             <div className="text-center py-12">
               <Users className="w-16 h-16 text-gray-300 mx-auto mb-4" />
               <h3 className="text-lg font-medium text-gray-900 mb-2">No workers yet</h3>
               <p className="text-gray-600 mb-4">
                 Get started by adding your first team member.
               </p>
-              <button onClick={handleAddWorker} className="btn-primary">
+              <button onClick={handleAddWorker} className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors">
                 Add First Worker
               </button>
             </div>
@@ -369,8 +484,8 @@ const WorkerManagement: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {workers.map((worker) => (
-                    <tr key={worker.id} className="border-b border-gray-100 hover:bg-gray-50">
+                  {filteredWorkers.map((worker) => (
+                    <tr key={worker.id} className={`border-b border-gray-100 hover:bg-gray-50 ${!worker.isActive ? 'opacity-75' : ''}`}>
                       <td className="py-3 px-4">
                         <div className="font-medium text-gray-900">{worker.name}</div>
                         <div className="text-sm text-gray-500">
@@ -392,7 +507,7 @@ const WorkerManagement: React.FC = () => {
                         </div>
                       </td>
                       <td className="py-3 px-4">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-800">
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
                           {worker.workPercentage}%
                         </span>
                       </td>
@@ -414,16 +529,19 @@ const WorkerManagement: React.FC = () => {
                         </div>
                       </td>
                       <td className="py-3 px-4">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          worker.isActive
-                            ? 'bg-green-100 text-green-800'
-                            : 'bg-gray-100 text-gray-800'
-                        }`}>
-                          {worker.isActive ? 'Active' : 'Inactive'}
-                        </span>
+                        <div className="flex items-center space-x-2">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            worker.isActive
+                              ? 'bg-green-100 text-green-800'
+                              : 'bg-gray-100 text-gray-800'
+                          }`}>
+                            {worker.isActive ? 'Active' : 'Inactive'}
+                          </span>
+                        </div>
                       </td>
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end space-x-2">
+                          {/* Edit Button */}
                           <button
                             onClick={() => handleEditWorker(worker)}
                             className="p-2 text-gray-400 hover:text-gray-600 transition-colors"
@@ -431,13 +549,30 @@ const WorkerManagement: React.FC = () => {
                           >
                             <Edit2 className="w-4 h-4" />
                           </button>
+
+                          {/* Activate/Deactivate Toggle */}
                           <button
-                            onClick={() => handleDeleteWorker(worker.id)}
-                            className="p-2 text-gray-400 hover:text-red-600 transition-colors"
-                            title="Delete worker"
+                            onClick={() => handleToggleWorkerStatus(worker.id, worker.isActive)}
+                            className={`p-2 transition-colors ${
+                              worker.isActive
+                                ? 'text-green-500 hover:text-green-700'
+                                : 'text-gray-400 hover:text-green-500'
+                            }`}
+                            title={worker.isActive ? 'Deactivate worker' : 'Reactivate worker'}
                           >
-                            <Trash2 className="w-4 h-4" />
+                            {worker.isActive ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
                           </button>
+
+                          {/* Permanent Delete (only for inactive workers) */}
+                          {!worker.isActive && (
+                            <button
+                              onClick={() => handlePermanentDelete(worker.id)}
+                              className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+                              title="Permanently delete worker (cannot be undone)"
+                            >
+                              <AlertTriangle className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -452,4 +587,4 @@ const WorkerManagement: React.FC = () => {
   );
 };
 
-export default WorkerManagement;
+export default ImprovedWorkerManagement;
