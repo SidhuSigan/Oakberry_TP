@@ -208,12 +208,24 @@ class WorkerService {
     return { success: true };
   }
 
+  // FIXED: Toggle worker status between active/inactive
   toggleWorkerStatus(workerId: string): { success: boolean; error?: string } {
     const worker = this.getWorkerById(workerId);
     if (!worker) return { success: false, error: 'Worker not found' };
 
-    const updatedWorker = { ...worker, isActive: !worker.isActive };
-    return this.updateWorker(workerId, updatedWorker);
+    const updatedWorker: Worker = {
+      ...worker,
+      isActive: !worker.isActive,
+      updatedAt: new Date().toISOString()
+    };
+
+    const saved = storageService.updateWorker(updatedWorker);
+
+    if (!saved) {
+      return { success: false, error: 'Failed to update worker status' };
+    }
+
+    return { success: true };
   }
 
   // Add holiday date for worker

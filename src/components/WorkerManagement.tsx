@@ -1,34 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Edit2, Phone, Mail, Users, ToggleLeft, ToggleRight, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 
-// Mock data and types (in real app these would come from your actual files)
-type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
-
-interface Worker {
-  id: string;
-  name: string;
-  phone: string;
-  email?: string;
-  workPercentage: number;
-  availableDays: DayOfWeek[];
-  holidayDates: string[];
-  isActive: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-interface WorkerFormData {
-  name: string;
-  phone: string;
-  email?: string;
-  workPercentage: number;
-  availableDays: DayOfWeek[];
-}
-
-// interface ValidationError {
-//   field: string;
-//   message: string;
-// }
+// Import the real services
+import { workerService } from '../services/workerService';
+import type { Worker, WorkerFormData, ValidationError, DayOfWeek } from '../types';
 
 const DAYS_OF_WEEK: { key: DayOfWeek; label: string }[] = [
   { key: 'monday', label: 'Monday' },
@@ -40,55 +15,7 @@ const DAYS_OF_WEEK: { key: DayOfWeek; label: string }[] = [
   { key: 'sunday', label: 'Sunday' },
 ];
 
-// Mock service
-const mockWorkerService = {
-  getAllWorkers: () => [
-    {
-      id: '1',
-      name: 'Anna Mueller',
-      phone: '+41 79 123 4567',
-      email: 'anna@example.com',
-      workPercentage: 100,
-      availableDays: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'] as DayOfWeek[],
-      holidayDates: [],
-      isActive: true,
-      createdAt: '2024-01-15T10:00:00Z',
-      updatedAt: '2024-01-15T10:00:00Z'
-    },
-    {
-      id: '2',
-      name: 'Marco Rossi',
-      phone: '+41 79 234 5678',
-      email: 'marco@example.com',
-      workPercentage: 60,
-      availableDays: ['tuesday', 'wednesday', 'thursday', 'saturday', 'sunday'] as DayOfWeek[],
-      holidayDates: [],
-      isActive: true,
-      createdAt: '2024-01-10T09:00:00Z',
-      updatedAt: '2024-01-10T09:00:00Z'
-    },
-    {
-      id: '3',
-      name: 'Sarah Johnson',
-      phone: '+41 79 345 6789',
-      email: 'sarah@example.com',
-      workPercentage: 80,
-      availableDays: ['monday', 'wednesday', 'friday', 'saturday', 'sunday'] as DayOfWeek[],
-      holidayDates: [],
-      isActive: false,
-      createdAt: '2024-01-05T14:00:00Z',
-      updatedAt: '2024-01-20T11:30:00Z'
-    }
-  ],
-  getWorkerStats: () => ({
-    total: 3,
-    active: 2,
-    inactive: 1,
-    averageWorkPercentage: 80
-  })
-};
-
-const ImprovedWorkerManagement: React.FC = () => {
+const WorkerManagement: React.FC = () => {
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingWorker, setEditingWorker] = useState<Worker | null>(null);
@@ -100,7 +27,7 @@ const ImprovedWorkerManagement: React.FC = () => {
     workPercentage: 100,
     availableDays: [],
   });
-//   const [errors, setErrors] = useState<ValidationError[]>([]);
+  const [errors, setErrors] = useState<ValidationError[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Load workers on component mount
@@ -109,7 +36,8 @@ const ImprovedWorkerManagement: React.FC = () => {
   }, []);
 
   const loadWorkers = () => {
-    const allWorkers = mockWorkerService.getAllWorkers();
+    // Use the real worker service instead of mock data
+    const allWorkers = workerService.getAllWorkers();
     setWorkers(allWorkers);
   };
 
@@ -121,7 +49,7 @@ const ImprovedWorkerManagement: React.FC = () => {
       workPercentage: 100,
       availableDays: [],
     });
-    // setErrors([]);
+    setErrors([]);
     setEditingWorker(null);
     setShowForm(false);
   };
@@ -140,7 +68,7 @@ const ImprovedWorkerManagement: React.FC = () => {
       availableDays: [...worker.availableDays],
     });
     setEditingWorker(worker);
-    // setErrors([]);
+    setErrors([]);
     setShowForm(true);
   };
 
@@ -149,7 +77,6 @@ const ImprovedWorkerManagement: React.FC = () => {
     const worker = workers.find(w => w.id === workerId);
     if (!worker) return;
 
-    // const action = currentStatus ? 'deactivate' : 'reactivate';
     const message = currentStatus
       ? `Deactivate ${worker.name}? They will no longer be available for new schedules, but their data will be preserved.`
       : `Reactivate ${worker.name}? They will be available for new schedule assignments.`;
@@ -158,13 +85,15 @@ const ImprovedWorkerManagement: React.FC = () => {
       return;
     }
 
-    // Simulate API call
-    const updatedWorkers = workers.map(w =>
-      w.id === workerId
-        ? { ...w, isActive: !currentStatus, updatedAt: new Date().toISOString() }
-        : w
-    );
-    setWorkers(updatedWorkers);
+    // Use the real worker service
+    const result = await workerService.toggleWorkerStatus(workerId);
+
+    if (result.success) {
+      // Reload workers from storage to get the updated data
+      loadWorkers();
+    } else {
+      alert(`Error: ${result.error}`);
+    }
   };
 
   // Permanent delete (hard delete)
@@ -182,39 +111,47 @@ const ImprovedWorkerManagement: React.FC = () => {
       return;
     }
 
-    // Simulate API call
-    const updatedWorkers = workers.filter(w => w.id !== workerId);
-    setWorkers(updatedWorkers);
+    // Use the real worker service
+    const result = await workerService.permanentlyDeleteWorker(workerId);
+
+    if (result.success) {
+      // Reload workers from storage to get the updated data
+      loadWorkers();
+    } else {
+      alert(`Error: ${result.error}`);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmitting(true);
-    // setErrors([]);
+    setErrors([]);
 
-    // Simulate form submission
-    setTimeout(() => {
+    try {
+      let result;
+
       if (editingWorker) {
-        const updatedWorkers = workers.map(w =>
-          w.id === editingWorker.id
-            ? { ...w, ...formData, updatedAt: new Date().toISOString() }
-            : w
-        );
-        setWorkers(updatedWorkers);
+        // Update existing worker
+        result = await workerService.updateWorker(editingWorker.id, formData);
       } else {
-        const newWorker: Worker = {
-          id: Date.now().toString(),
-          ...formData,
-          holidayDates: [],
-          isActive: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-        setWorkers([...workers, newWorker]);
+        // Create new worker
+        result = await workerService.createWorker(formData);
       }
-      resetForm();
+
+      if (result.success) {
+        // Reload workers from storage to get the updated data
+        loadWorkers();
+        resetForm();
+      } else {
+        // Display validation errors
+        setErrors(result.errors || []);
+      }
+    } catch (error) {
+      console.error('Error submitting worker form:', error);
+      setErrors([{ field: 'general', message: 'An unexpected error occurred' }]);
+    } finally {
       setIsSubmitting(false);
-    }, 1000);
+    }
   };
 
   const handleDayToggle = (day: DayOfWeek) => {
@@ -226,18 +163,12 @@ const ImprovedWorkerManagement: React.FC = () => {
     }));
   };
 
-//   const getFieldError = (fieldName: string): string | undefined => {
-//     return errors.find(e => e.field === fieldName)?.message;
-//   };
-
-  const stats = {
-    total: workers.length,
-    active: workers.filter(w => w.isActive).length,
-    inactive: workers.filter(w => !w.isActive).length,
-    averageWorkPercentage: workers.filter(w => w.isActive).length > 0
-        ? Math.round(workers.filter(w => w.isActive).reduce((sum, w) => sum + w.workPercentage, 0) / workers.filter(w => w.isActive).length)
-        : 0
+  const getFieldError = (fieldName: string): string | undefined => {
+    return errors.find(e => e.field === fieldName)?.message;
   };
+
+  // Use the real worker service for stats
+  const stats = workerService.getWorkerStats();
   const filteredWorkers = showInactive ? workers : workers.filter(w => w.isActive);
   const inactiveCount = workers.filter(w => !w.isActive).length;
 
@@ -327,7 +258,16 @@ const ImprovedWorkerManagement: React.FC = () => {
                   {editingWorker ? 'Edit Worker' : 'Add New Worker'}
                 </h2>
 
-                <div className="space-y-6">
+                <form onSubmit={handleSubmit} className="space-y-6">
+                  {/* General Error */}
+                  {errors.find(e => e.field === 'general') && (
+                    <div className="bg-red-50 border border-red-200 rounded-md p-3">
+                      <p className="text-sm text-red-600">
+                        {getFieldError('general')}
+                      </p>
+                    </div>
+                  )}
+
                   {/* Name */}
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -337,10 +277,15 @@ const ImprovedWorkerManagement: React.FC = () => {
                       type="text"
                       value={formData.name}
                       onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        getFieldError('name') ? 'border-red-300' : 'border-gray-300'
+                      }`}
                       placeholder="Enter worker name"
                       required
                     />
+                    {getFieldError('name') && (
+                      <p className="mt-1 text-sm text-red-600">{getFieldError('name')}</p>
+                    )}
                   </div>
 
                   {/* Phone */}
@@ -352,10 +297,15 @@ const ImprovedWorkerManagement: React.FC = () => {
                       type="tel"
                       value={formData.phone}
                       onChange={(e) => setFormData(prev => ({ ...prev, phone: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        getFieldError('phone') ? 'border-red-300' : 'border-gray-300'
+                      }`}
                       placeholder="Enter phone number"
                       required
                     />
+                    {getFieldError('phone') && (
+                      <p className="mt-1 text-sm text-red-600">{getFieldError('phone')}</p>
+                    )}
                   </div>
 
                   {/* Email */}
@@ -367,9 +317,14 @@ const ImprovedWorkerManagement: React.FC = () => {
                       type="email"
                       value={formData.email}
                       onChange={(e) => setFormData(prev => ({ ...prev, email: e.target.value }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        getFieldError('email') ? 'border-red-300' : 'border-gray-300'
+                      }`}
                       placeholder="Enter email address (optional)"
                     />
+                    {getFieldError('email') && (
+                      <p className="mt-1 text-sm text-red-600">{getFieldError('email')}</p>
+                    )}
                   </div>
 
                   {/* Work Percentage */}
@@ -383,13 +338,18 @@ const ImprovedWorkerManagement: React.FC = () => {
                       max="100"
                       value={formData.workPercentage}
                       onChange={(e) => setFormData(prev => ({ ...prev, workPercentage: parseInt(e.target.value) || 0 }))}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        getFieldError('workPercentage') ? 'border-red-300' : 'border-gray-300'
+                      }`}
                       placeholder="100"
                       required
                     />
                     <p className="mt-1 text-sm text-gray-500">
                       Target hours per week: {Math.round((formData.workPercentage / 100) * 40)}
                     </p>
+                    {getFieldError('workPercentage') && (
+                      <p className="mt-1 text-sm text-red-600">{getFieldError('workPercentage')}</p>
+                    )}
                   </div>
 
                   {/* Available Days */}
@@ -410,6 +370,9 @@ const ImprovedWorkerManagement: React.FC = () => {
                         </label>
                       ))}
                     </div>
+                    {getFieldError('availableDays') && (
+                      <p className="mt-1 text-sm text-red-600">{getFieldError('availableDays')}</p>
+                    )}
                   </div>
 
                   {/* Form Actions */}
@@ -417,21 +380,21 @@ const ImprovedWorkerManagement: React.FC = () => {
                     <button
                       type="button"
                       onClick={resetForm}
-                      className="px-4 py-2 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                      disabled={isSubmitting}
+                      className="px-4 py-2 text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors disabled:opacity-50"
                     >
                       Cancel
                     </button>
                     <button
-                      type="button"
-                      onClick={handleSubmit}
+                      type="submit"
                       disabled={isSubmitting}
-                      className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors flex items-center space-x-2"
+                      className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors flex items-center space-x-2 disabled:opacity-50"
                     >
                       {isSubmitting && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>}
                       <span>{editingWorker ? 'Update Worker' : 'Add Worker'}</span>
                     </button>
                   </div>
-                </div>
+                </form>
               </div>
             </div>
           </div>
@@ -587,4 +550,4 @@ const ImprovedWorkerManagement: React.FC = () => {
   );
 };
 
-export default ImprovedWorkerManagement;
+export default WorkerManagement;
