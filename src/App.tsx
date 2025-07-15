@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { Calendar, Users, Settings, Home } from 'lucide-react';
 import WorkerManagement from './components/WorkerManagement';
-import ScheduleGeneration from './components/ScheduleGeneration';
+import ConsolidatedScheduleManager from './components/ConsolidatedScheduleManager';
 
 type Page = 'home' | 'workers' | 'schedules' | 'settings';
 
@@ -16,7 +16,7 @@ function App() {
       case 'workers':
         return <WorkerManagement />;
       case 'schedules':
-        return <ScheduleGeneration />;
+        return <ConsolidatedScheduleManager />;
       case 'settings':
         return (
           <div className="container py-8">
