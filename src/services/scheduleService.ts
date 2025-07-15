@@ -171,37 +171,47 @@ class ScheduleService {
     const shiftHours = this.getHoursBetween(shift.startTime, shift.endTime);
     const newTotalHours = currentHours + shiftHours;
 
-    // Strong preference for workers who are significantly under their target
-    const hoursRemaining = Math.max(0, targetHours - currentHours);
+    // Calculate how far worker is from their target as a percentage
+    const currentPercentage = (currentHours / targetHours) * 100;
+    const newPercentage = (newTotalHours / targetHours) * 100;
 
-    if (hoursRemaining >= shiftHours) {
-      // Worker is well under target - strong bonus
-      score += 100;
-    } else if (hoursRemaining > 0) {
+    // Preference for workers below their target, but not so strong that it prevents coverage
+    if (currentPercentage < 80) {
+      // Worker is under target - good bonus
+      score += 80;
+    } else if (currentPercentage < 100) {
       // Worker is slightly under target - moderate bonus
       score += 50;
-    } else if (newTotalHours <= targetHours + 2) {
-      // Worker would be slightly over target - small bonus
+    } else if (newPercentage <= 120) {
+      // Worker would be over but within acceptable range - small bonus
       score += 20;
-    } else if (newTotalHours <= targetHours + 5) {
-      // Worker would be moderately over target - neutral
-      score += 0;
+    } else if (newPercentage <= 140) {
+      // Worker would be significantly over - small penalty
+      score -= 20;
     } else {
-      // Worker would be significantly over target - penalty
-      const overage = newTotalHours - targetHours;
-      score -= overage * 10;
+      // Worker would be extremely over target - stronger penalty
+      const overage = newPercentage - 140;
+      score -= overage * 2;
     }
 
-    // Balance workload across team - prefer workers with fewer current hours
-    const weeklyHoursRatio = currentHours / Math.max(targetHours, 1);
-    score += (1 - weeklyHoursRatio) * 50;
-
-    // Preference for higher work percentage workers for critical shifts
-    if (shift.type === 'opening' || shift.type === 'closing') {
-      score += worker.workPercentage * 0.3;
+    // Prefer distributing hours evenly - bonus based on how far below average they are
+    const allWorkerHours = existingShifts
+      .filter(s => s.workerId)
+      .reduce((acc, s) => {
+        const hours = this.getShiftHours(s);
+        acc[s.workerId!] = (acc[s.workerId!] || 0) + hours;
+        return acc;
+      }, {} as Record<string, number>);
+    
+    const avgHours = Object.values(allWorkerHours).length > 0 
+      ? Object.values(allWorkerHours).reduce((sum, h) => sum + h, 0) / Object.values(allWorkerHours).length
+      : 0;
+    
+    if (currentHours < avgHours) {
+      score += 30; // Bonus for being below average
     }
 
-    // Avoid consecutive days when possible (but don't make it a hard constraint)
+    // Slight penalty for consecutive days (but don't make it too strong)
     const previousDate = this.getPreviousDay(date);
     const nextDate = this.getNextDay(date);
 
@@ -213,12 +223,12 @@ class ScheduleService {
     );
 
     if (workedPreviousDay || workedNextDay) {
-      score -= 15; // Penalty for consecutive days
+      score -= 10; // Mild penalty for consecutive days
     }
 
-    // Slight preference for workers who haven't worked this week yet
+    // Moderate preference for workers who haven't worked this week yet
     if (currentHours === 0) {
-      score += 25;
+      score += 30;
     }
 
     return Math.max(0, score);
@@ -238,8 +248,9 @@ class ScheduleService {
     return d.toISOString().split('T')[0];
   }
 
-  // Assign workers to a shift (now handles multiple concurrent workers)
-  private assignWorkersToShift(
+
+  // Two-phase assignment: prioritize workers who need hours most
+  private assignWorkersBalanced(
     shiftTemplate: ShiftTemplate,
     date: string,
     existingShifts: Shift[],
@@ -267,7 +278,7 @@ class ScheduleService {
       return shifts;
     }
 
-    // Score and sort workers
+    // Score and sort ALL available workers (no pre-filtering)
     const scoredWorkers = availableWorkers
       .map(worker => ({
         worker,
@@ -275,37 +286,38 @@ class ScheduleService {
       }))
       .sort((a, b) => b.score - a.score);
 
-    // Determine how many workers to assign based on template and availability
+    // Determine how many workers to assign
     let workersToAssign = Math.min(
       shiftTemplate.maxWorkers,
       Math.max(shiftTemplate.minWorkers, availableWorkers.length)
     );
 
-    // For high-priority shifts (lunch/dinner rush), try to assign maximum workers
+    // For high-priority shifts, try to assign maximum workers
     if (shiftTemplate.priority === 'high') {
       workersToAssign = Math.min(shiftTemplate.maxWorkers, availableWorkers.length);
     }
 
-    // Assign workers up to the determined amount
+    // Assign workers with more flexible hour limits
     let assignedCount = 0;
-    for (let i = 0; i < workersToAssign && i < scoredWorkers.length; i++) {
+    for (let i = 0; i < scoredWorkers.length && assignedCount < workersToAssign; i++) {
       const { worker } = scoredWorkers[i];
 
-      // Check if this worker would go extremely over their target
+      // Check hour limits
       const currentHours = this.getWorkerWeeklyHours(worker.id, existingShifts);
       const targetHours = calculateTargetHours(worker.workPercentage);
       const shiftHours = this.getHoursBetween(shiftTemplate.startTime, shiftTemplate.endTime);
       const newTotalHours = currentHours + shiftHours;
+      const newPercentage = (newTotalHours / targetHours) * 100;
 
-      // Prevent excessive single-day workloads (never generate shifts longer than 12 hours)
-      if (shiftHours > 12) {
-        continue; // Skip this worker for overly long shifts
+      // More flexible limits to ensure coverage
+      // Allow up to 140% for coverage needs, but only skip if we have enough workers
+      if (newPercentage > 140 && assignedCount >= shiftTemplate.minWorkers) {
+        continue;
       }
-
-      // Allow flexibility but prevent extreme overages (only skip if we have enough coverage)
-      const overage = newTotalHours - targetHours;
-      if (overage > 12 && assignedCount >= shiftTemplate.minWorkers) {
-        continue; // Skip this worker
+      
+      // Absolute maximum of 160% to prevent extreme overtime
+      if (newPercentage > 160) {
+        continue;
       }
 
       shifts.push({
@@ -322,7 +334,7 @@ class ScheduleService {
       assignedCount++;
     }
 
-    // If we couldn't assign enough workers for minimum requirements, create unassigned shifts
+    // Create unassigned shifts for remaining minimum requirements
     for (let i = assignedCount; i < shiftTemplate.minWorkers; i++) {
       shifts.push({
         id: this.generateShiftId(),
@@ -353,9 +365,9 @@ class ScheduleService {
       const dayOfWeek = getDayOfWeek(dateString);
       const dayTemplates = shiftTemplates.filter(template => template.day === dayOfWeek);
 
-      // For each shift time slot, we can assign multiple workers concurrently
+      // Use the improved balanced assignment method
       dayTemplates.forEach(template => {
-        const dayShifts = this.assignWorkersToShift(template, dateString, shifts, new Set());
+        const dayShifts = this.assignWorkersBalanced(template, dateString, shifts, new Set());
         shifts.push(...dayShifts);
       });
     }
@@ -368,7 +380,7 @@ class ScheduleService {
       isGenerated: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      notes: `Auto-generated schedule for week of ${weekStart} - Oakberry Açaí Bowl Shop`
+      notes: `Auto-generated schedule for week of ${weekStart} - Improved work percentage distribution`
     };
 
     return schedule;
