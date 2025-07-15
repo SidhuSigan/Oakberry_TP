@@ -49,6 +49,7 @@ interface SimpleDay {
   totalHours: number;
   unassigned: number;
   needsAttention: boolean;
+  warnings: string[];
 }
 
 const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = ({ onScheduleUpdate }) => {
@@ -64,6 +65,13 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
     date: string;
     startTime: string;
     endTime: string;
+  } | null>(null);
+  const [draggingShift, setDraggingShift] = useState<{
+    workerId: string;
+    date: string;
+    startX: number;
+    originalStartTime: string;
+    originalEndTime: string;
   } | null>(null);
 
   // Initialize with next Monday and load data
@@ -143,9 +151,15 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
       const dayWorkers = Object.entries(workerShifts).map(([workerId, shifts]) => {
         const worker = workers.find(w => w.id === workerId);
         const totalHours = shifts.reduce((sum, shift) => {
-          const start = new Date(`2000-01-01 ${shift.startTime}`);
-          const end = new Date(`2000-01-01 ${shift.endTime}`);
-          return sum + (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+          const [startHour, startMin] = shift.startTime.split(':').map(Number);
+          const [endHour, endMin] = shift.endTime.split(':').map(Number);
+          
+          const startMinutes = startHour * 60 + startMin;
+          const endMinutes = endHour * 60 + endMin;
+          
+          // Handle same-day shifts only (no overnight shifts)
+          const duration = endMinutes - startMinutes;
+          return sum + (duration / 60);
         }, 0);
 
         const times = shifts.map(s => ({ start: s.startTime, end: s.endTime }));
@@ -167,7 +181,40 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
       });
 
       const totalHours = dayWorkers.reduce((sum, w) => sum + w.hours, 0);
-      const needsAttention = unassignedShifts.length > 0 || dayWorkers.length < 2;
+      
+      // Generate warnings based on business rules
+      const warnings: string[] = [];
+      
+      // Check for store opening coverage
+      const hasOpeningWorker = dayWorkers.some(w => w.isOpening);
+      if (!hasOpeningWorker) {
+        warnings.push('⚠️ No one assigned to open the store');
+      }
+      
+      // Check for store closing coverage
+      const hasClosingWorker = dayWorkers.some(w => w.isClosing);
+      if (!hasClosingWorker) {
+        warnings.push('⚠️ No one assigned to close the store');
+      }
+      
+      // Check for minimum staffing during operating hours
+      if (dayWorkers.length < 3) {
+        warnings.push('⚠️ Insufficient staff coverage - minimum 3 workers recommended');
+      }
+      
+      // Check for unassigned shifts
+      if (unassignedShifts.length > 0) {
+        warnings.push(`⚠️ ${unassignedShifts.length} unassigned shift${unassignedShifts.length > 1 ? 's' : ''}`);
+      }
+      
+      // Check for workers with excessive hours (>100% workload)
+      dayWorkers.forEach(worker => {
+        if (worker.hours > 12) {
+          warnings.push(`⚠️ ${worker.name} scheduled for ${worker.hours}h (excessive workload)`);
+        }
+      });
+
+      const needsAttention = warnings.length > 0;
 
       return {
         date,
@@ -176,7 +223,8 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
         totalWorkers: dayWorkers.length,
         totalHours: Math.round(totalHours * 10) / 10,
         unassigned: unassignedShifts.length,
-        needsAttention
+        needsAttention,
+        warnings
       };
     });
   };
@@ -221,13 +269,13 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
       return;
     }
 
-    // Create regular 8-hour shift
+    // Create regular 9-hour shift (more realistic for your business)
     const newShift: Shift = {
       id: `shift_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
       workerId,
       date,
-      startTime: '09:30',
-      endTime: '17:30',
+      startTime: '10:30',
+      endTime: '19:30',
       type: 'regular',
       isRequired: false
     };
@@ -351,6 +399,90 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
     setEditingShift(null);
   };
 
+  // Handle drag start for shift
+  const handleDragStart = (e: React.MouseEvent, workerId: string, date: string) => {
+    e.preventDefault();
+    if (!currentSchedule) return;
+
+    const workerShifts = currentSchedule.shifts.filter(s => s.workerId === workerId && s.date === date);
+    if (workerShifts.length === 0) return;
+
+    const times = workerShifts.map(s => ({ start: s.startTime, end: s.endTime }));
+    times.sort((a, b) => a.start.localeCompare(b.start));
+
+    setDraggingShift({
+      workerId,
+      date,
+      startX: e.clientX,
+      originalStartTime: times[0].start,
+      originalEndTime: times[times.length - 1].end
+    });
+
+    // Prevent text selection during drag
+    document.body.style.userSelect = 'none';
+  };
+
+  // Handle drag move
+  const handleDragMove = (e: React.MouseEvent) => {
+    if (!draggingShift || !currentSchedule) return;
+
+    const deltaX = e.clientX - draggingShift.startX;
+    
+    // Calculate time change based on pixel movement
+    // Assume timeline represents 15 hours (7:00-22:00) across the available width
+    // Use a simple conversion: every 40 pixels = 1 hour
+    const hoursChange = deltaX / 40;
+    
+    // Round to 15-minute intervals
+    const quartersChange = Math.round(hoursChange * 4) / 4;
+    const minutesChange = quartersChange * 60;
+    
+    // Calculate original duration in minutes
+    const [origStartHour, origStartMin] = draggingShift.originalStartTime.split(':').map(Number);
+    const [origEndHour, origEndMin] = draggingShift.originalEndTime.split(':').map(Number);
+    const originalDuration = (origEndHour * 60 + origEndMin) - (origStartHour * 60 + origStartMin);
+    
+    // Calculate new start time
+    const originalStartMinutes = origStartHour * 60 + origStartMin;
+    const newStartMinutes = originalStartMinutes + minutesChange;
+    const newEndMinutes = newStartMinutes + originalDuration;
+    
+    // Validate bounds (7:00 - 22:00)
+    if (newStartMinutes < 7 * 60 || newEndMinutes > 22 * 60) return;
+    
+    // Convert back to time strings
+    const newStartHours = Math.floor(newStartMinutes / 60);
+    const newStartMins = newStartMinutes % 60;
+    const newEndHours = Math.floor(newEndMinutes / 60);
+    const newEndMins = newEndMinutes % 60;
+    
+    const newStartTime = `${newStartHours.toString().padStart(2, '0')}:${newStartMins.toString().padStart(2, '0')}`;
+    const newEndTime = `${newEndHours.toString().padStart(2, '0')}:${newEndMins.toString().padStart(2, '0')}`;
+
+    // Update the shift visually for preview
+    setEditingShift({
+      workerId: draggingShift.workerId,
+      date: draggingShift.date,
+      startTime: newStartTime,
+      endTime: newEndTime
+    });
+  };
+
+  // Handle drag end
+  const handleDragEnd = () => {
+    document.body.style.userSelect = '';
+    
+    if (!draggingShift) return;
+
+    if (editingShift) {
+      // Apply the change
+      handleSaveShiftEdit();
+    }
+    
+    setDraggingShift(null);
+    setEditingShift(null);
+  };
+
   // Calculate team Arbeitspensum status
   const getTeamStats = () => {
     if (!currentSchedule) return { totalHours: 0, avgPercentage: 0, workersWithIssues: 0, workerStats: [] };
@@ -358,9 +490,15 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
     const workerStats = workers.map(worker => {
       const workerShifts = currentSchedule.shifts.filter(s => s.workerId === worker.id);
       const totalHours = workerShifts.reduce((sum, shift) => {
-        const start = new Date(`2000-01-01 ${shift.startTime}`);
-        const end = new Date(`2000-01-01 ${shift.endTime}`);
-        return sum + (end.getTime() - start.getTime()) / (1000 * 60 * 60);
+        const [startHour, startMin] = shift.startTime.split(':').map(Number);
+        const [endHour, endMin] = shift.endTime.split(':').map(Number);
+        
+        const startMinutes = startHour * 60 + startMin;
+        const endMinutes = endHour * 60 + endMin;
+        
+        // Handle same-day shifts only (no overnight shifts)
+        const duration = endMinutes - startMinutes;
+        return sum + (duration / 60);
       }, 0);
 
       const targetHours = (worker.workPercentage / 100) * 40;
@@ -620,6 +758,21 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
                 </button>
               </div>
 
+              {/* Warnings */}
+              {day.warnings.length > 0 && (
+                <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <div className="flex items-center space-x-2 mb-2">
+                    <AlertTriangle className="w-5 h-5 text-yellow-600" />
+                    <span className="font-medium text-yellow-800">Scheduling Issues</span>
+                  </div>
+                  <ul className="space-y-1 text-sm text-yellow-700">
+                    {day.warnings.map((warning, index) => (
+                      <li key={index}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               {/* Workers */}
               <div className="space-y-3">
                 {day.workers.map(worker => (
@@ -721,8 +874,27 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
                 </button>
               </div>
 
+              {/* Warnings */}
+              {day.warnings.length > 0 && (
+                <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <div className="flex items-center space-x-2 mb-2">
+                    <AlertTriangle className="w-5 h-5 text-yellow-600" />
+                    <span className="font-medium text-yellow-800">Scheduling Issues</span>
+                  </div>
+                  <ul className="space-y-1 text-sm text-yellow-700">
+                    {day.warnings.map((warning, index) => (
+                      <li key={index}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               {/* Timeline Grid */}
-              <div className="relative">
+              <div className="relative"
+                onMouseMove={handleDragMove}
+                onMouseUp={handleDragEnd}
+                onMouseLeave={handleDragEnd}
+              >
                 {/* Hour markers */}
                 <div className="flex relative h-8 border-b border-gray-200">
                   {Array.from({ length: 15 }, (_, i) => i + 7).map(hour => (
@@ -743,6 +915,8 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
                     const startOffset = ((startHour - 7) * 60 + startMin) / (15 * 60) * 100;
                     const duration = ((endHour - startHour) * 60 + (endMin - startMin)) / (15 * 60) * 100;
 
+                    const isDragging = draggingShift?.workerId === worker.id && draggingShift?.date === day.date;
+
                     return (
                       <div key={worker.id} className="relative h-12 bg-gray-50 rounded">
                         <div className="absolute left-0 top-0 bottom-0 w-32 px-2 py-2 text-sm font-medium bg-white border-r border-gray-200 flex items-center">
@@ -751,13 +925,15 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
                         </div>
                         <div className="ml-32 relative h-full">
                           <div
-                            className={`absolute top-1 bottom-1 rounded flex items-center px-2 text-xs text-white font-medium ${
+                            className={`absolute top-1 bottom-1 rounded flex items-center px-2 text-xs text-white font-medium cursor-move transition-all ${
                               worker.isOpening ? 'bg-green-600' : worker.isClosing ? 'bg-blue-600' : 'bg-gray-600'
-                            }`}
+                            } ${isDragging ? 'opacity-75 shadow-lg' : 'hover:shadow-md'}`}
                             style={{
                               left: `${startOffset}%`,
                               width: `${duration}%`
                             }}
+                            onMouseDown={(e) => handleDragStart(e, worker.id, day.date)}
+                            title="Drag to move shift time"
                           >
                             <div className="flex items-center space-x-1">
                               {worker.isOpening && <Coffee className="w-3 h-3" />}
@@ -871,37 +1047,140 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-4">
+                {/* Quick Presets */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Start Time
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Quick Presets
                   </label>
-                  <input
-                    type="time"
-                    value={editingShift.startTime}
-                    onChange={(e) => setEditingShift({
-                      ...editingShift,
-                      startTime: e.target.value
-                    })}
-                    step="900"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => setEditingShift({
+                        ...editingShift,
+                        startTime: '09:00',
+                        endTime: '18:00'
+                      })}
+                      className="px-3 py-2 text-sm bg-blue-50 text-blue-700 rounded-md hover:bg-blue-100 transition-colors"
+                    >
+                      Opening (9:00-18:00)
+                    </button>
+                    <button
+                      onClick={() => setEditingShift({
+                        ...editingShift,
+                        startTime: '10:30',
+                        endTime: '19:30'
+                      })}
+                      className="px-3 py-2 text-sm bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100 transition-colors"
+                    >
+                      Standard (10:30-19:30)
+                    </button>
+                    <button
+                      onClick={() => setEditingShift({
+                        ...editingShift,
+                        startTime: '11:00',
+                        endTime: '20:00'
+                      })}
+                      className="px-3 py-2 text-sm bg-green-50 text-green-700 rounded-md hover:bg-green-100 transition-colors"
+                    >
+                      Lunch Rush (11:00-20:00)
+                    </button>
+                    <button
+                      onClick={() => {
+                        // Get the store hours for this day to determine closing time
+                        const dayNames: DayOfWeek[] = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+                        const dayIndex = new Date(editingShift.date).getDay();
+                        const dayOfWeek = dayNames[dayIndex];
+                        const storeHours = DEFAULT_STORE_HOURS.find(h => h.day === dayOfWeek);
+                        
+                        // Calculate closing time (30 minutes after store close)
+                        const storeCloseTime = storeHours?.close || '20:00';
+                        const [hours, minutes] = storeCloseTime.split(':').map(Number);
+                        const closingTime = new Date(2000, 0, 1, hours, minutes + 30);
+                        const closingTimeStr = closingTime.toTimeString().slice(0, 5);
+                        
+                        setEditingShift({
+                          ...editingShift,
+                          startTime: '13:00',
+                          endTime: closingTimeStr
+                        });
+                      }}
+                      className="px-3 py-2 text-sm bg-purple-50 text-purple-700 rounded-md hover:bg-purple-100 transition-colors"
+                    >
+                      Closing (13:00-close)
+                    </button>
+                  </div>
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Start Time
+                  </label>
+                  <div className="flex items-center space-x-2">
+                    <select
+                      value={editingShift.startTime.split(':')[0]}
+                      onChange={(e) => setEditingShift({
+                        ...editingShift,
+                        startTime: `${e.target.value}:${editingShift.startTime.split(':')[1]}`
+                      })}
+                      className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {Array.from({ length: 15 }, (_, i) => i + 7).map(hour => (
+                        <option key={hour} value={hour.toString().padStart(2, '0')}>
+                          {hour.toString().padStart(2, '0')}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-gray-500">:</span>
+                    <select
+                      value={editingShift.startTime.split(':')[1]}
+                      onChange={(e) => setEditingShift({
+                        ...editingShift,
+                        startTime: `${editingShift.startTime.split(':')[0]}:${e.target.value}`
+                      })}
+                      className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="00">00</option>
+                      <option value="15">15</option>
+                      <option value="30">30</option>
+                      <option value="45">45</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
                     End Time
                   </label>
-                  <input
-                    type="time"
-                    value={editingShift.endTime}
-                    onChange={(e) => setEditingShift({
-                      ...editingShift,
-                      endTime: e.target.value
-                    })}
-                    step="900"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                  <div className="flex items-center space-x-2">
+                    <select
+                      value={editingShift.endTime.split(':')[0]}
+                      onChange={(e) => setEditingShift({
+                        ...editingShift,
+                        endTime: `${e.target.value}:${editingShift.endTime.split(':')[1]}`
+                      })}
+                      className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {Array.from({ length: 15 }, (_, i) => i + 7).map(hour => (
+                        <option key={hour} value={hour.toString().padStart(2, '0')}>
+                          {hour.toString().padStart(2, '0')}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-gray-500">:</span>
+                    <select
+                      value={editingShift.endTime.split(':')[1]}
+                      onChange={(e) => setEditingShift({
+                        ...editingShift,
+                        endTime: `${editingShift.endTime.split(':')[0]}:${e.target.value}`
+                      })}
+                      className="px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="00">00</option>
+                      <option value="15">15</option>
+                      <option value="30">30</option>
+                      <option value="45">45</option>
+                    </select>
+                  </div>
                 </div>
               </div>
 

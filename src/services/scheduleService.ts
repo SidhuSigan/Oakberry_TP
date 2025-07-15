@@ -65,66 +65,40 @@ class ScheduleService {
       const openTime = storeHour.open;
       const closeTime = storeHour.close;
       const isWeekend = storeHour.day === 'saturday' || storeHour.day === 'sunday';
-      const isLongDay = storeHour.day === 'thursday' || storeHour.day === 'friday' || isWeekend;
 
-      // OPENING PERIOD (9:00-11:00) - 1 person sufficient for setup
+      // OPENING SHIFT (9:00-18:00) - Long shift for opening team
       templates.push({
         day: storeHour.day,
         startTime: this.subtractMinutes(openTime, 30), // 09:00
-        endTime: this.addHours(openTime, 1.5), // 11:00
+        endTime: this.addHours(openTime, 8.5), // 18:00
         type: 'opening',
-        minWorkers: 1,
-        maxWorkers: 1,
-        priority: 'medium'
-      });
-
-      // LUNCH RUSH (11:00-15:00) - High demand period
-      templates.push({
-        day: storeHour.day,
-        startTime: this.addHours(openTime, 1.5), // 11:00
-        endTime: this.addHours(openTime, 5.5), // 15:00
-        type: 'regular',
-        minWorkers: isWeekend ? 4 : 3, // Sunday = 4 people, weekdays = 3 people
-        maxWorkers: isWeekend ? 5 : 4,
+        minWorkers: 2,
+        maxWorkers: 3,
         priority: 'high'
       });
 
-      // AFTERNOON (15:00-17:00) - Moderate demand
+      // MID-DAY SHIFT (10:30-19:30) - Standard 9-hour shift
       templates.push({
         day: storeHour.day,
-        startTime: this.addHours(openTime, 5.5), // 15:00
-        endTime: this.addHours(openTime, 7.5), // 17:00
+        startTime: this.addHours(openTime, 1), // 10:30
+        endTime: this.addHours(openTime, 9), // 19:30
         type: 'regular',
         minWorkers: isWeekend ? 3 : 2,
         maxWorkers: isWeekend ? 4 : 3,
-        priority: 'medium'
+        priority: 'high'
       });
 
-      // EVENING RUSH (17:00-19:30) - High demand again
-      if (isLongDay) {
-        templates.push({
-          day: storeHour.day,
-          startTime: this.addHours(openTime, 7.5), // 17:00
-          endTime: this.addHours(openTime, 10), // 19:30
-          type: 'regular',
-          minWorkers: isWeekend ? 4 : 3,
-          maxWorkers: isWeekend ? 5 : 4,
-          priority: 'high'
-        });
-      }
-
-      // CLOSING PERIOD - 2 people for cleaning and closing tasks
-      const closingStart = isLongDay ?
-        this.addHours(openTime, 10) : // 19:30 for long days
-        this.addHours(openTime, 7.5);  // 17:00 for short days
+      // CLOSING SHIFT - From lunch until 30min after close
+      const closingStart = this.addHours(openTime, 3.5); // 13:00
+      const closingEnd = this.addMinutes(closeTime, 30); // 30min after close
 
       templates.push({
         day: storeHour.day,
         startTime: closingStart,
-        endTime: this.addMinutes(closeTime, 30), // 30min after close
+        endTime: closingEnd,
         type: 'closing',
         minWorkers: 2,
-        maxWorkers: 3, // Extra person on busy days
+        maxWorkers: 3,
         priority: 'high'
       });
     });
@@ -160,7 +134,9 @@ class ScheduleService {
     const startMinutes = startHour * 60 + startMin;
     const endMinutes = endHour * 60 + endMin;
 
-    return (endMinutes - startMinutes) / 60;
+    // Handle same-day shifts only (no overnight shifts)
+    const duration = endMinutes - startMinutes;
+    return duration / 60;
   }
 
   private getShiftHours(shift: Shift): number {
@@ -320,6 +296,11 @@ class ScheduleService {
       const targetHours = calculateTargetHours(worker.workPercentage);
       const shiftHours = this.getHoursBetween(shiftTemplate.startTime, shiftTemplate.endTime);
       const newTotalHours = currentHours + shiftHours;
+
+      // Prevent excessive single-day workloads (never generate shifts longer than 12 hours)
+      if (shiftHours > 12) {
+        continue; // Skip this worker for overly long shifts
+      }
 
       // Allow flexibility but prevent extreme overages (only skip if we have enough coverage)
       const overage = newTotalHours - targetHours;

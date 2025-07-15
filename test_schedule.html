@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Schedule Test</title>
+</head>
+<body>
+    <h1>Test Schedule Generation</h1>
+    <button onclick="addTestWorkers()">Add Test Workers</button>
+    <button onclick="clearData()">Clear All Data</button>
+    <button onclick="testSchedule()">Test Schedule Generation</button>
+    <div id="output"></div>
+
+    <script>
+        function addTestWorkers() {
+            const workers = [
+                {
+                    id: 'worker_1',
+                    name: 'John Smith',
+                    phone: '+41791234567',
+                    workPercentage: 80,
+                    availableDays: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
+                    holidayDates: [],
+                    isActive: true,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                },
+                {
+                    id: 'worker_2',
+                    name: 'Sarah Johnson',
+                    phone: '+41791234568',
+                    workPercentage: 60,
+                    availableDays: ['monday', 'tuesday', 'wednesday', 'saturday', 'sunday'],
+                    holidayDates: [],
+                    isActive: true,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                },
+                {
+                    id: 'worker_3',
+                    name: 'Mike Brown',
+                    phone: '+41791234569',
+                    workPercentage: 100,
+                    availableDays: ['thursday', 'friday', 'saturday', 'sunday'],
+                    holidayDates: [],
+                    isActive: true,
+                    createdAt: new Date().toISOString(),
+                    updatedAt: new Date().toISOString()
+                }
+            ];
+            
+            localStorage.setItem('oakberry_workers', JSON.stringify(workers));
+            document.getElementById('output').innerHTML = '<p>Added 3 test workers to localStorage</p>';
+        }
+
+        function clearData() {
+            localStorage.removeItem('oakberry_workers');
+            localStorage.removeItem('oakberry_schedules');
+            document.getElementById('output').innerHTML = '<p>Cleared all data</p>';
+        }
+
+        function testSchedule() {
+            const workers = JSON.parse(localStorage.getItem('oakberry_workers') || '[]');
+            document.getElementById('output').innerHTML = `
+                <h2>Current Workers:</h2>
+                <pre>${JSON.stringify(workers, null, 2)}</pre>
+                <p>Workers count: ${workers.length}</p>
+                <p>Active workers: ${workers.filter(w => w.isActive).length}</p>
+            `;
+        }
+    </script>
+</body>
+</html>
