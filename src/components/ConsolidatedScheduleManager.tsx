@@ -150,21 +150,16 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
       // Create worker summaries
       const dayWorkers = Object.entries(workerShifts).map(([workerId, shifts]) => {
         const worker = workers.find(w => w.id === workerId);
-        const totalHours = shifts.reduce((sum, shift) => {
-          const [startHour, startMin] = shift.startTime.split(':').map(Number);
-          const [endHour, endMin] = shift.endTime.split(':').map(Number);
-          
-          const startMinutes = startHour * 60 + startMin;
-          const endMinutes = endHour * 60 + endMin;
-          
-          // Handle same-day shifts only (no overnight shifts)
-          const duration = endMinutes - startMinutes;
-          return sum + (duration / 60);
-        }, 0);
-
+        
+        // Calculate time range first
         const times = shifts.map(s => ({ start: s.startTime, end: s.endTime }));
         times.sort((a, b) => a.start.localeCompare(b.start));
         const timeRange = `${times[0].start} - ${times[times.length - 1].end}`;
+        
+        // Calculate total hours as the time span from earliest start to latest end
+        const earliestStart = new Date(`2000-01-01 ${times[0].start}`);
+        const latestEnd = new Date(`2000-01-01 ${times[times.length - 1].end}`);
+        const totalHours = (latestEnd.getTime() - earliestStart.getTime()) / (1000 * 60 * 60);
 
         // Use dynamic labels based on actual times
         const { isOpening, isClosing } = getWorkerShiftLabels(date, shifts);
@@ -489,16 +484,29 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
 
     const workerStats = workers.map(worker => {
       const workerShifts = currentSchedule.shifts.filter(s => s.workerId === worker.id);
-      const totalHours = workerShifts.reduce((sum, shift) => {
-        const [startHour, startMin] = shift.startTime.split(':').map(Number);
-        const [endHour, endMin] = shift.endTime.split(':').map(Number);
+      
+      // Group shifts by date to calculate daily totals correctly
+      const shiftsByDate: Record<string, typeof workerShifts> = {};
+      workerShifts.forEach(shift => {
+        if (!shiftsByDate[shift.date]) {
+          shiftsByDate[shift.date] = [];
+        }
+        shiftsByDate[shift.date].push(shift);
+      });
+      
+      // Calculate total hours across all days
+      const totalHours = Object.values(shiftsByDate).reduce((sum, dayShifts) => {
+        if (dayShifts.length === 0) return sum;
         
-        const startMinutes = startHour * 60 + startMin;
-        const endMinutes = endHour * 60 + endMin;
+        // For each day, calculate the time span from earliest start to latest end
+        const times = dayShifts.map(s => ({ start: s.startTime, end: s.endTime }));
+        times.sort((a, b) => a.start.localeCompare(b.start));
         
-        // Handle same-day shifts only (no overnight shifts)
-        const duration = endMinutes - startMinutes;
-        return sum + (duration / 60);
+        const earliestStart = new Date(`2000-01-01 ${times[0].start}`);
+        const latestEnd = new Date(`2000-01-01 ${times[times.length - 1].end}`);
+        const dayHours = (latestEnd.getTime() - earliestStart.getTime()) / (1000 * 60 * 60);
+        
+        return sum + dayHours;
       }, 0);
 
       const targetHours = (worker.workPercentage / 100) * 40;

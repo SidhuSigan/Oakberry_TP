@@ -85,19 +85,19 @@ const ScheduleEditor: React.FC<ScheduleEditorProps> = ({ schedule, onScheduleUpd
       // Create consolidated worker shifts
       const consolidatedShifts: ConsolidatedWorkerShift[] = Object.entries(workerShifts).map(([workerId, shifts]) => {
         const worker = workers.find(w => w.id === workerId);
-        const totalHours = shifts.reduce((sum, shift) => {
-          const start = new Date(`2000-01-01 ${shift.startTime}`);
-          const end = new Date(`2000-01-01 ${shift.endTime}`);
-          return sum + (end.getTime() - start.getTime()) / (1000 * 60 * 60);
-        }, 0);
-
-        const hasOpening = shifts.some(s => s.type === 'opening');
-        const hasClosing = shifts.some(s => s.type === 'closing');
-
-        // Calculate time range
+        
+        // Calculate time range first
         const times = shifts.map(s => ({ start: s.startTime, end: s.endTime }));
         times.sort((a, b) => a.start.localeCompare(b.start));
         const timeRange = `${times[0].start} - ${times[times.length - 1].end}`;
+        
+        // Calculate total hours as the time span from earliest start to latest end
+        const earliestStart = new Date(`2000-01-01 ${times[0].start}`);
+        const latestEnd = new Date(`2000-01-01 ${times[times.length - 1].end}`);
+        const totalHours = (latestEnd.getTime() - earliestStart.getTime()) / (1000 * 60 * 60);
+
+        const hasOpening = shifts.some(s => s.type === 'opening');
+        const hasClosing = shifts.some(s => s.type === 'closing');
 
         return {
           workerId,
