@@ -18,12 +18,15 @@ import {
   Moon,
   Edit3,
   Save,
-  RotateCcw
+  RotateCcw,
+  List,
+  BarChart3
 } from 'lucide-react';
 
 import { scheduleService } from '../services/scheduleService';
 import { workerService } from '../services/workerService';
 import type { Schedule, Worker, Shift, DayOfWeek } from '../types';
+import { DEFAULT_STORE_HOURS } from '../types';
 
 interface ConsolidatedScheduleManagerProps {
   onScheduleUpdate?: (schedule: Schedule) => void;
@@ -54,6 +57,8 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
   const [currentSchedule, setCurrentSchedule] = useState<Schedule | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [showAddWorker, setShowAddWorker] = useState<string | null>(null);
+  const [showWorkerOverview, setShowWorkerOverview] = useState(false);
+  const [viewMode, setViewMode] = useState<'list' | 'timeline'>('list');
   const [editingShift, setEditingShift] = useState<{
     workerId: string;
     date: string;
@@ -80,6 +85,39 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
       setCurrentSchedule(existingSchedule);
     }
   }, []);
+
+  // Helper function to determine if a worker is doing opening or closing based on their actual times
+  const getWorkerShiftLabels = (date: string, shifts: Shift[]) => {
+    const dayNames: DayOfWeek[] = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const dayOfWeek = dayNames[new Date(date).getDay()];
+    const storeHours = DEFAULT_STORE_HOURS.find(h => h.day === dayOfWeek);
+    if (!storeHours) return { isOpening: false, isClosing: false };
+
+    // Sort shifts by start time
+    const sortedShifts = [...shifts].sort((a, b) => a.startTime.localeCompare(b.startTime));
+    
+    // Opening: Worker starts before or at store opening time (allowing 30 min before)
+    const openingThreshold = new Date(`2000-01-01 ${storeHours.open}`);
+    openingThreshold.setMinutes(openingThreshold.getMinutes() - 30);
+    const openingTime = openingThreshold.toTimeString().slice(0, 5);
+    
+    const isOpening = sortedShifts.some(shift => shift.startTime <= openingTime);
+    
+    // Closing: Worker ends at or after store closing time
+    const isClosing = sortedShifts.some(shift => shift.endTime >= storeHours.close);
+
+    return { isOpening, isClosing };
+  };
+
+  // Helper function to round time to nearest 15-minute interval
+  const roundToQuarterHour = (time: string): string => {
+    const [hours, minutes] = time.split(':').map(Number);
+    const totalMinutes = hours * 60 + minutes;
+    const roundedMinutes = Math.round(totalMinutes / 15) * 15;
+    const roundedHours = Math.floor(roundedMinutes / 60);
+    const roundedMins = roundedMinutes % 60;
+    return `${String(roundedHours).padStart(2, '0')}:${String(roundedMins).padStart(2, '0')}`;
+  };
 
   // Calculate simple day view data
   const getSimpleDays = (): SimpleDay[] => {
@@ -114,14 +152,17 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
         times.sort((a, b) => a.start.localeCompare(b.start));
         const timeRange = `${times[0].start} - ${times[times.length - 1].end}`;
 
+        // Use dynamic labels based on actual times
+        const { isOpening, isClosing } = getWorkerShiftLabels(date, shifts);
+
         return {
           id: workerId,
           name: worker?.name || 'Unknown',
           hours: Math.round(totalHours * 10) / 10,
           timeRange,
           arbeitspensum: worker?.workPercentage || 0,
-          isOpening: shifts.some(s => s.type === 'opening'),
-          isClosing: shifts.some(s => s.type === 'closing')
+          isOpening,
+          isClosing
         };
       });
 
@@ -263,15 +304,19 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
   const handleSaveShiftEdit = () => {
     if (!currentSchedule || !editingShift) return;
 
+    // Round times to 15-minute intervals
+    const roundedStartTime = roundToQuarterHour(editingShift.startTime);
+    const roundedEndTime = roundToQuarterHour(editingShift.endTime);
+
     // Validate times
-    if (editingShift.startTime >= editingShift.endTime) {
+    if (roundedStartTime >= roundedEndTime) {
       alert('Start time must be before end time');
       return;
     }
 
     // Calculate duration
-    const startDate = new Date(`2000-01-01 ${editingShift.startTime}`);
-    const endDate = new Date(`2000-01-01 ${editingShift.endTime}`);
+    const startDate = new Date(`2000-01-01 ${roundedStartTime}`);
+    const endDate = new Date(`2000-01-01 ${roundedEndTime}`);
     const duration = (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60);
 
     if (duration > 12) {
@@ -283,13 +328,13 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
       !(s.workerId === editingShift.workerId && s.date === editingShift.date)
     );
 
-    // Create new shift with updated times
+    // Create new shift with updated and rounded times
     const newShift: Shift = {
       id: `shift_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`,
       workerId: editingShift.workerId,
       date: editingShift.date,
-      startTime: editingShift.startTime,
-      endTime: editingShift.endTime,
+      startTime: roundedStartTime,
+      endTime: roundedEndTime,
       type: 'regular',
       isRequired: false
     };
@@ -308,7 +353,7 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
 
   // Calculate team Arbeitspensum status
   const getTeamStats = () => {
-    if (!currentSchedule) return { totalHours: 0, avgPercentage: 0, workersWithIssues: 0 };
+    if (!currentSchedule) return { totalHours: 0, avgPercentage: 0, workersWithIssues: 0, workerStats: [] };
 
     const workerStats = workers.map(worker => {
       const workerShifts = currentSchedule.shifts.filter(s => s.workerId === worker.id);
@@ -323,10 +368,11 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
 
       return {
         worker,
-        totalHours,
-        targetHours,
-        achievementPercentage,
-        hasIssue: achievementPercentage < 80 || achievementPercentage > 120
+        totalHours: Math.round(totalHours * 10) / 10,
+        targetHours: Math.round(targetHours * 10) / 10,
+        achievementPercentage: Math.round(achievementPercentage),
+        hasIssue: achievementPercentage < 80 || achievementPercentage > 120,
+        status: achievementPercentage < 80 ? 'under' : achievementPercentage > 120 ? 'over' : 'normal'
       };
     });
 
@@ -334,7 +380,12 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
     const avgPercentage = workerStats.reduce((sum, w) => sum + w.achievementPercentage, 0) / workerStats.length;
     const workersWithIssues = workerStats.filter(w => w.hasIssue).length;
 
-    return { totalHours: Math.round(totalHours), avgPercentage: Math.round(avgPercentage), workersWithIssues };
+    return { 
+      totalHours: Math.round(totalHours), 
+      avgPercentage: Math.round(avgPercentage), 
+      workersWithIssues,
+      workerStats
+    };
   };
 
   const simpleDays = getSimpleDays();
@@ -425,8 +476,115 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
         </div>
       )}
 
+      {/* Worker Overview Toggle */}
+      {currentSchedule && (
+        <div className="flex justify-center">
+          <button
+            onClick={() => setShowWorkerOverview(!showWorkerOverview)}
+            className="flex items-center space-x-2 px-4 py-2 text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
+          >
+            <Users className="w-4 h-4" />
+            <span>{showWorkerOverview ? 'Hide' : 'Show'} Worker Overview</span>
+          </button>
+        </div>
+      )}
+
+      {/* Worker Overview Section */}
+      {currentSchedule && showWorkerOverview && (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+            <Users className="w-5 h-5 mr-2" />
+            Worker Overview - Hours vs Target
+          </h3>
+          
+          <div className="space-y-3">
+            {teamStats.workerStats.map(({ worker, totalHours, targetHours, achievementPercentage, status }) => (
+              <div key={worker.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                <div className="flex items-center space-x-4 flex-1">
+                  <div className="flex items-center space-x-2 min-w-[150px]">
+                    <User className="w-5 h-5 text-gray-600" />
+                    <span className="font-medium text-gray-900">{worker.name}</span>
+                  </div>
+                  
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm text-gray-600">Target:</span>
+                    <span className="font-medium">{targetHours}h</span>
+                    <span className="text-gray-400">({worker.workPercentage}%)</span>
+                  </div>
+                  
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm text-gray-600">Actual:</span>
+                    <span className={`font-medium ${
+                      status === 'under' ? 'text-orange-600' : 
+                      status === 'over' ? 'text-red-600' : 
+                      'text-green-600'
+                    }`}>{totalHours}h</span>
+                  </div>
+                  
+                  <div className="flex-1">
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div 
+                        className={`h-2 rounded-full transition-all ${
+                          status === 'under' ? 'bg-orange-500' : 
+                          status === 'over' ? 'bg-red-500' : 
+                          'bg-green-500'
+                        }`}
+                        style={{ width: `${Math.min(achievementPercentage, 150)}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                  
+                  <div className={`text-sm font-medium px-3 py-1 rounded ${
+                    status === 'under' ? 'bg-orange-100 text-orange-800' : 
+                    status === 'over' ? 'bg-red-100 text-red-800' : 
+                    'bg-green-100 text-green-800'
+                  }`}>
+                    {achievementPercentage}%
+                    {status === 'under' && ' (Under)'}
+                    {status === 'over' && ' (Over)'}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          
+          <div className="mt-4 p-3 bg-blue-50 rounded-lg text-sm text-blue-800">
+            <p className="font-medium">Target Range: 80% - 120% of Arbeitspensum</p>
+            <p>Workers outside this range are highlighted and counted as having quota issues.</p>
+          </div>
+        </div>
+      )}
+
+      {/* View Mode Toggle */}
+      {currentSchedule && (
+        <div className="flex justify-center space-x-2">
+          <button
+            onClick={() => setViewMode('list')}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${
+              viewMode === 'list' 
+                ? 'bg-blue-600 text-white' 
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+          >
+            <List className="w-4 h-4" />
+            <span>List View</span>
+          </button>
+          <button
+            onClick={() => setViewMode('timeline')}
+            className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${
+              viewMode === 'timeline' 
+                ? 'bg-blue-600 text-white' 
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4" />
+            <span>Timeline View</span>
+          </button>
+        </div>
+      )}
+
       {/* Schedule Display */}
-      {currentSchedule ? (
+      {currentSchedule && viewMode === 'list' ? (
         <div className="space-y-4">
           {simpleDays.map(day => (
             <div key={day.date} className={`bg-white rounded-lg border-2 p-6 ${day.needsAttention ? 'border-yellow-300 bg-yellow-50' : 'border-gray-200'}`}>
@@ -535,6 +693,103 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
             </div>
           ))}
         </div>
+      ) : currentSchedule && viewMode === 'timeline' ? (
+        <div className="space-y-4">
+          {simpleDays.map(day => (
+            <div key={day.date} className={`bg-white rounded-lg border-2 p-6 ${day.needsAttention ? 'border-yellow-300 bg-yellow-50' : 'border-gray-200'}`}>
+              {/* Day Header */}
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center space-x-3">
+                  <h3 className="text-lg font-semibold text-gray-900">{day.dayName}</h3>
+                  <div className="flex items-center space-x-4 text-sm text-gray-600">
+                    <div className="flex items-center space-x-1">
+                      <Users className="w-4 h-4" />
+                      <span>{day.totalWorkers} workers</span>
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      <Clock className="w-4 h-4" />
+                      <span>{day.totalHours}h total</span>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowAddWorker(day.date)}
+                  className="flex items-center space-x-2 px-3 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add Worker</span>
+                </button>
+              </div>
+
+              {/* Timeline Grid */}
+              <div className="relative">
+                {/* Hour markers */}
+                <div className="flex relative h-8 border-b border-gray-200">
+                  {Array.from({ length: 15 }, (_, i) => i + 7).map(hour => (
+                    <div key={hour} className="flex-1 text-xs text-gray-500 text-center border-r border-gray-100">
+                      {hour}:00
+                    </div>
+                  ))}
+                </div>
+
+                {/* Worker timelines */}
+                <div className="space-y-2 mt-2">
+                  {day.workers.map(worker => {
+                    const startHour = parseInt(worker.timeRange.split(' - ')[0].split(':')[0]);
+                    const startMin = parseInt(worker.timeRange.split(' - ')[0].split(':')[1]);
+                    const endHour = parseInt(worker.timeRange.split(' - ')[1].split(':')[0]);
+                    const endMin = parseInt(worker.timeRange.split(' - ')[1].split(':')[1]);
+                    
+                    const startOffset = ((startHour - 7) * 60 + startMin) / (15 * 60) * 100;
+                    const duration = ((endHour - startHour) * 60 + (endMin - startMin)) / (15 * 60) * 100;
+
+                    return (
+                      <div key={worker.id} className="relative h-12 bg-gray-50 rounded">
+                        <div className="absolute left-0 top-0 bottom-0 w-32 px-2 py-2 text-sm font-medium bg-white border-r border-gray-200 flex items-center">
+                          <User className="w-4 h-4 mr-1 text-gray-600" />
+                          {worker.name}
+                        </div>
+                        <div className="ml-32 relative h-full">
+                          <div
+                            className={`absolute top-1 bottom-1 rounded flex items-center px-2 text-xs text-white font-medium ${
+                              worker.isOpening ? 'bg-green-600' : worker.isClosing ? 'bg-blue-600' : 'bg-gray-600'
+                            }`}
+                            style={{
+                              left: `${startOffset}%`,
+                              width: `${duration}%`
+                            }}
+                          >
+                            <div className="flex items-center space-x-1">
+                              {worker.isOpening && <Coffee className="w-3 h-3" />}
+                              {worker.isClosing && <Moon className="w-3 h-3" />}
+                              <span>{worker.hours}h</span>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Legend */}
+                <div className="flex items-center space-x-4 mt-4 text-xs">
+                  <div className="flex items-center space-x-1">
+                    <div className="w-4 h-4 bg-green-600 rounded"></div>
+                    <span>Opening shift</span>
+                  </div>
+                  <div className="flex items-center space-x-1">
+                    <div className="w-4 h-4 bg-blue-600 rounded"></div>
+                    <span>Closing shift</span>
+                  </div>
+                  <div className="flex items-center space-x-1">
+                    <div className="w-4 h-4 bg-gray-600 rounded"></div>
+                    <span>Regular shift</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
       ) : (
         <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
           <Calendar className="w-12 h-12 mx-auto mb-4 text-gray-400" />
@@ -628,6 +883,7 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
                       ...editingShift,
                       startTime: e.target.value
                     })}
+                    step="900"
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
@@ -643,6 +899,7 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
                       ...editingShift,
                       endTime: e.target.value
                     })}
+                    step="900"
                     className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
@@ -659,6 +916,9 @@ const ConsolidatedScheduleManager: React.FC<ConsolidatedScheduleManagerProps> = 
                       return duration > 0 ? `${duration.toFixed(1)} hours` : 'Invalid times';
                     })()
                   }
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Times are limited to 15-minute intervals
                 </div>
               </div>
 
